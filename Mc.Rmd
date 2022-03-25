@@ -1,0 +1,1641 @@
+---
+title: "mcDeseq"
+author: "chris paight"
+date: "11/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r import libraries}
+setwd("~/difExp")
+library("DESeq2")
+library("tximport")
+library("readr")
+library("tximportData")
+library("dplyr")
+library("IHW")
+library("ggplot2")
+library("vsn")
+library("pheatmap")
+library(IHW)
+library("RColorBrewer")
+```
+
+
+```{r import data}
+#add correct path information
+#imports study design, gene map, Kegg referance, and salmon quant files
+#removes all genes with < 10 total coverage
+#creates DEseq object
+studyDesign <- read.delim("~/studyDesign.csv", stringsAsFactors=TRUE)
+studyDesign1 <- studyDesign[c(-24,-25,-26),]
+studyDesign1$treatment <-paste0(studyDesign1$prey,sep='_',studyDesign1$state)
+mcGenemap <- read.delim("~/mcGenemap.txt")
+totalKOrefmap <- read.delim("~/totalKOrefmap.txt")
+files <- file.path(studyDesign1$sample, "quant.sf")
+files <- paste0('cleanMcquants/', sep = "", files)
+txi.mc <- tximport(files, type = "salmon", tx2gene = mcGenemap)
+ddsmc <- DESeqDataSetFromTximport(txi.mc, colData = studyDesign1, design = ~prey+state)
+keep <- rowSums(counts(ddsmc)) >= 10
+ddsmc <- ddsmc[keep,]
+ddsmc <- DESeq(ddsmc)
+```
+
+```{r results mc}
+#total results block
+#basic differential expression plot
+resmc <- results(ddsmc)
+resultsNames(ddsmc)
+resOrderedmc <- resmc[order(resmc$pvalue),]
+resSigmc <- subset(resOrderedmc, padj < 0.1)
+sum(resmc$padj < 0.1, na.rm=TRUE)
+resIHWmc <- results(ddsmc, filterFun=ihw)
+sum(resIHWmc$padj < 0.1, na.rm=TRUE)
+plotMA(resmc, ylim=c(-2,2))
+```
+```{r pairwise}
+#pairwise comparisons fed v starve
+resLFCA1 <- lfcShrink(ddsmc, coef="treatment_CM_starve_vs_CM_fed", type="apeglm")
+resLFCA2 <- lfcShrink(ddsmc, coef="treatment_HP_fed_vs_CM_fed", type="apeglm")
+resLFCA3 <- lfcShrink(ddsmc, coef="treatment_HP_starve_vs_CM_fed", type="apeglm")
+resLFCA4 <- lfcShrink(ddsmc, coef="treatment_RS_fed_vs_CM_fed", type="apeglm")
+#resLFCA5 <- lfcShrink(ddsmc, coef="treatment_RS_recent_vs_CM_fed", type="apeglm")
+resLFCA6 <- lfcShrink(ddsmc, coef="treatment_RS_starve_vs_CM_fed", type="apeglm")
+resLFCA7 <- lfcShrink(ddsmc, coef="treatment_SM_fed_vs_CM_fed", type="apeglm")
+resLFCA8 <- lfcShrink(ddsmc, coef="treatment_SM_starve_vs_CM_fed", type="apeglm")
+```
+```{r normalization mc}
+resapeglmmc <- lfcShrink(ddsmc, coef=2, type="apeglm")
+par(mfrow=c(1,3), mar=c(4,4,2,1))
+xlim <- c(1,1e5); ylim <- c(-3,3)
+resNormmc <- lfcShrink(ddsmc, coef=2, type="normal")
+plotMA(resNormmc, xlim=xlim, ylim=ylim, main="normal")
+plotCounts(ddsmc, gene=which.min(resmc$padj), intgroup="prey")
+```
+```{r shrinkage mc}
+rldmc <- rlog(ddsmc, blind=FALSE)
+ntdmc <- normTransform(ddsmc)
+vsdmc <- vst(ddsmc, blind=FALSE)
+meanSdPlot(assay(ntdmc))
+meanSdPlot(assay(vsdmc))
+meanSdPlot(assay(rldmc))
+```
+```{r heatmap mc}
+#basic heatmap
+sampleDistsmc <- dist(t(assay(vsdmc)))
+sampleDistMatrixmc <- as.matrix(sampleDistsmc)
+rownames(sampleDistMatrixmc) <- paste(vsdmc$treatment)
+colnames(sampleDistMatrixmc) <- null
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+heatmc <- pheatmap(sampleDistMatrixmc, clustering_distance_rows=sampleDistsmc, clustering_distance_cols=sampleDistsmc, col=colors)
+save_pheatmap_pdf(heatmc, "rmkdVersion/mcheat.pdf")
+```
+```{r dendrogram}
+#vst collapse to basic dendrogram
+sampleDistsmc1 <- dist(t(assay(vsdmc)), method="euclidean")
+#sampleDistMatrixmc <- as.matrix(sampleDistsmc1, labels=TRUE)
+h <- hclust(sampleDistsmc1, method="complete")
+h$labels <- studyDesign1$code
+plot(h)
+#plot( as.dendrogram(h) , las=1, main="d=euclidean\nh=complete")
+library(ape)
+class(h) # must be hclust class
+my_tree <- as.phylo(h) 
+#export newick tree of vst distances
+write.tree(phy=my_tree, file="exported_tree.newick")
+```
+```{r pairwise comparisons}
+setwd("~/difExp")
+studyDesign1$state <- factor(studyDesign1$state)
+
+studyDesignRS <- studyDesign1[studyDesign1$prey == 'RS', ]
+studyDesignSM <- studyDesign1[studyDesign1$prey == 'SM', ]
+studyDesignHP <- studyDesign1[studyDesign1$prey == 'HP', ]
+studyDesignCM <- studyDesign1[studyDesign1$prey == 'CM', ]
+
+filesRS <- file.path(studyDesignRS$sample, "quant.sf")
+filesSM <- file.path(studyDesignSM$sample, "quant.sf")
+filesHP <- file.path(studyDesignHP$sample, "quant.sf")
+filesCM <- file.path(studyDesignCM$sample, "quant.sf")
+
+filesRS <- paste0('cleanMcquants/', sep = "", filesRS)
+filesSM <- paste0('cleanMcquants/', sep = "", filesSM)
+filesHP <- paste0('cleanMcquants/', sep = "", filesHP)
+filesCM <- paste0('cleanMcquants/', sep = "", filesCM)
+
+
+txi.RS <- tximport(filesRS, type = "salmon", tx2gene = mcGenemap)
+txi.SM <- tximport(filesSM, type = "salmon", tx2gene = mcGenemap)
+txi.HP <- tximport(filesHP, type = "salmon", tx2gene = mcGenemap)
+txi.CM <- tximport(filesCM, type = "salmon", tx2gene = mcGenemap)
+
+ddsRS <- DESeqDataSetFromTximport(txi.RS, colData = studyDesignRS, design = ~state)
+ddsSM <- DESeqDataSetFromTximport(txi.SM, colData = studyDesignSM, design = ~state)
+ddsHP <- DESeqDataSetFromTximport(txi.HP, colData = studyDesignHP, design = ~state)
+ddsCM <- DESeqDataSetFromTximport(txi.CM, colData = studyDesignCM, design = ~state)
+
+#keepRS <- rowSums(counts(ddsRS)) >= 10
+#keepSM <- rowSums(counts(ddsSM)) >= 10
+#keepHP <- rowSums(counts(ddsHP)) >= 10
+#keepCM <- rowSums(counts(ddsCM)) >= 10
+
+#ddsRS <- ddsRS[keepRS,]
+#ddsSM <- ddsSM[keepSM,]
+#ddsHP <- ddsHP[keepHP,]
+#ddsCM <- ddsCM[keepCM,]
+
+ddsRS <- DESeq(ddsRS)
+ddsSM <- DESeq(ddsSM)
+ddsHP <- DESeq(ddsHP)
+ddsCM <- DESeq(ddsCM)
+
+```
+```{r pairwise results}
+resRS <- results(ddsRS)
+resSM <- results(ddsSM)
+resHP <- results(ddsHP)
+resCM <- results(ddsCM)
+
+vsdRS <- vst(ddsRS, blind=FALSE)
+vsdSM <- vst(ddsSM, blind=FALSE)
+vsdHP <- vst(ddsHP, blind=FALSE)
+vsdCM <- vst(ddsCM, blind=FALSE)
+
+setwd("~/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork")
+write.csv(as.data.frame(resRS), file="resRS.csv")
+write.csv(as.data.frame(resSM), file="resSM.csv")
+write.csv(as.data.frame(resHP), file="resHP.csv")
+write.csv(as.data.frame(resCM), file="resCM.csv")
+```
+```{r comboResults}
+resRS <- read.csv("~/resRS.csv")
+resSM <- read.csv("~/resSM.csv")
+resHP <- read.csv("~/resHP.csv")
+resCM <- read.csv("~/resCM.csv")
+
+resRS$pair <- 'RS'
+resSM$pair <- 'SM'
+resHP$pair <- 'HP'
+resCM$pair <- 'CM'
+
+resRS$type <- 'red'
+resSM$type <- 'red'
+resHP$type <- 'green'
+resCM$type <- 'green'
+
+MCexptable <- rbind(resRS, resSM)
+MCexptable <- rbind(MCexptable, resHP)
+MCexptable <- rbind(MCexptable, resCM)
+
+names(MCexptable)[names(MCexptable)=="X"] <- "knum"
+#replace nas
+MCexptable[is.na(MCexptable)]<-"0"
+#select genes >2|-2 with adjusted pvalue <0.1
+MCexptable1 <- MCexptable %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+
+
+MCexptable2 <- MCexptable1 %>% group_by(knum) %>% mutate(DifExpRed = c(0, 1)[((type =="red") &
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+
+MCexptable3 <- MCexptable2 %>% group_by(knum) %>% mutate(DifExpGreen = c(0, 1)[((type =="green") &
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+AnnoTable <- merge(totalKOrefmap, MCexptable3, by=c('knum'))
+names(AnnoTable)[names(AnnoTable)=="log2FoldChange"] <- "fold"
+AnnoRed <- AnnoTable[AnnoTable$type=='red', ]
+AnnoGreen <- AnnoTable[AnnoTable$type=='green', ]
+AnnoRed <- arrange(AnnoRed,knum)
+
+AnnoRed <- AnnoRed %>% group_by(Knum) %>% mutate(RedDif=any(DifExp==1)) 
+AnnoGreen <- AnnoGreen %>% group_by(Knum) %>% mutate(GreenDif=any(DifExp==1)) 
+AnnoRed$GreenDif <- FALSE
+AnnoGreen$RedDif <- FALSE
+AllGeneTable <- rbind(AnnoRed, AnnoGreen)
+AllSig <- AllGeneTable %>% group_by(Knum) %>% filter(any(DifExp==1))
+```
+```{r hitoplot}
+AllSig$fold <- as.numeric(AllSig$fold)
+AnnoRed$fold <- as.numeric(AnnoRed$fold)
+AnnoGreen$fold <- as.numeric(AnnoGreen$fold)
+TotalHisto <- ggplot(AllSig, aes(x= fold)) + geom_histogram(data = AnnoRed, fill = "red", alpha = 0.4) + geom_histogram(data = AnnoGreen, fill = "green", alpha = 0.4) +theme_bw()
+plot(TotalHisto)
+
+deer <- c("09101 Carbohydrate metabolism","09102 Energy metabolism","09103 Lipid metabolism","09104 Nucleotide metabolism","09105 Amino acid metabolism","09106 Metabolism of other amino acids","09107 Glycan biosynthesis and metabolism","09108 Metabolism of cofactors and vitamins","09109 Metabolism of terpenoids and polyketides","09110 Biosynthesis of other secondary metabolites","09111 Xenobiotics biodegradation and metabolism","09112 Not included in regular maps","09121 Transcription","09183 Protein families: signaling and cellular processes","09191 Unclassified: metabolism","09192 Unclassified: genetic information processing","09193 Unclassified: signaling and cellular processes","09194 Poorly characterized","")
+counter = 1
+#my_colors <- c("blue", "red", "purple")
+#names(my_colors) <- levels(factor(c(levels(Mastertable1$encoded))))
+for (elk in 1:18){
+  df <- AllSig %>% filter(catagory==deer[elk])
+  dfR <- AnnoRed %>% filter(catagory==deer[elk])
+  dfG <- AnnoGreen %>% filter(catagory==deer[elk])
+  print(assign(paste0("plot", elk), ggplot(AllSig, aes(x= fold)) + geom_histogram(data = dfR, fill = "red", alpha = 0.2) +geom_histogram(data = dfG, fill = "green", alpha = 0.2) +theme_bw()+labs(y='Number of Genes', title =deer[elk])+facet_wrap(~deer[elk])))
+}
+
+```
+```{bash format study design}
+grep -e 'sample' -e 'fed' studyDesign1.csv > studyDesignfed.csv
+grep -e 'sample' -e 'starve' studyDesign1.csv > studyDesignstarve.csv
+```
+```{r import fed and starve}
+studyDesignfed <- read.delim("~/difExp/studyDesignfed.csv", stringsAsFactors=TRUE)
+studyDesignstarve <- read.delim("~/difExp/studyDesignstarve.csv", stringsAsFactors=TRUE)
+setwd("~/difExp")
+filesfed <- file.path(studyDesignfed$sample, "quant.sf")
+filesfed <- paste0('cleanMcquants/', sep = "", filesfed)
+txi.fed <- tximport(filesfed, type = "salmon", tx2gene = mcGenemap)
+ddsfed <- DESeqDataSetFromTximport(txi.fed, colData = studyDesignfed, design = ~type)
+ddsfed <- DESeq(ddsfed)
+filesstarve <- file.path(studyDesignstarve$sample, "quant.sf")
+filesstarve <- paste0('cleanMcquants/', sep = "", filesstarve)
+txi.starve <- tximport(filesstarve, type = "salmon", tx2gene = mcGenemap)
+ddsstarve <- DESeqDataSetFromTximport(txi.starve, colData = studyDesignstarve, design = ~type)
+ddsstarve <- DESeq(ddsstarve)
+```
+```{r results fed/starve}
+resfed <- results(ddsfed)
+resultsNames(ddsfed)
+resstarve <- results(ddsstarve)
+resultsNames(ddsstarve)
+vsdfed <- vst(ddsfed, blind=FALSE)
+meanSdPlot(assay(vsdfed))
+vsdstarve <- vst(ddsstarve, blind=FALSE)
+meanSdPlot(assay(vsdstarve))
+resLFCfed <- lfcShrink(ddsfed, coef="type_red_vs_green", type="apeglm")
+resLFCstarve <- lfcShrink(ddsstarve, coef="type_red_vs_green", type="apeglm")
+setwd("~/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork")
+write.csv(as.data.frame(resLFCfed), file="results_fed_red_green.csv")
+write.csv(as.data.frame(resLFCstarve), file="results_starve_red_green.csv")
+```
+```{r format results and merge}
+resultsFed <- as.data.frame(resLFCfed)
+resultsStarve <- as.data.frame(resLFCstarve)
+resultsFed$knum <- rownames(resultsFed)
+resultsStarve$knum <- rownames(resultsStarve)
+resultsFed$treatment <- 'fed'
+resultsStarve$treatment <- 'starve'
+resultsFed[is.na(resultsFed)]<-"0"
+resultsStarve[is.na(resultsStarve)]<-"0"
+resultsFed$log2FoldChange <- as.numeric(resultsFed$log2FoldChange)
+resultsStarve$log2FoldChange <- as.numeric(resultsStarve$log2FoldChange)
+resultsFed1 <- resultsFed %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarve1 <- resultsStarve %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+
+FedStarveFull <- rbind(resultsFed1, resultsStarve1)
+FedStarveFull <- merge(totalKOrefmap, FedStarveFull, by=c('knum'))
+names(FedStarveFull)[names(FedStarveFull)=="log2FoldChange"] <- "fold"
+AnnoSig <- FedStarveFull %>% filter(DifExp==1)
+AnnoSig1 <- AnnoSig %>%mutate(Direction = c(-1, 1)[(fold>=1)+1] )
+AnnoSigDown <- AnnoSig1 %>% group_by(catagory, treatment) %>% filter(Direction==-1) %>% summarise(down=sum(Direction))
+AnnoSigup <- AnnoSig1 %>% group_by(catagory, treatment) %>% filter(Direction==1) %>% summarise(up=sum(Direction))
+AnnoDir <- merge(AnnoSigDown, AnnoSigup, by=c('catagory', 'treatment'), all=TRUE)
+AnnoSigSpecificDown <- AnnoSig1 %>% group_by(catagory, treatment, specific) %>% filter(Direction==-1) %>% summarise(down=sum(Direction))
+AnnoSigSpicificup <- AnnoSig1 %>% group_by(catagory, treatment, specific) %>% filter(Direction==1) %>% summarise(up=sum(Direction))
+AnnoSpicificDir <- merge(AnnoSigSpecificDown, AnnoSigSpicificup, by=c('catagory', 'treatment', 'specific'), all=TRUE)
+AnnoSpicificDir[is.na(AnnoSpicificDir)]<-"0"
+
+AnnoFed <- FedStarveFull %>% filter(treatment=='fed'& DifExp==1)
+AnnoStarve <- FedStarveFull %>% filter(treatment=='starve'& DifExp==1)
+```
+```{r fed starve histogram}
+histo <- ggplot(FedStarveFull, aes(x= fold)) + geom_density(data = AnnoFed, fill = "red", alpha = 0.4) + geom_density(data = AnnoStarve, fill = "grey", alpha = 0.4) +theme_bw()
+plot(histo)
+
+```
+### Pairwise control =RS
+```{r import fed and starve RS control}
+studyDesignfed <- read.delim("~/difExp/studyDesignfed.csv", stringsAsFactors=TRUE)
+studyDesignstarve <- read.delim("~/difExp/studyDesignstarve.csv", stringsAsFactors=TRUE)
+setwd("~/difExp")
+filesfed <- file.path(studyDesignfed$sample, "quant.sf")
+filesfed <- paste0('cleanMcquants/', sep = "", filesfed)
+txi.fed <- tximport(filesfed, type = "salmon", tx2gene = mcGenemap)
+ddsfed <- DESeqDataSetFromTximport(txi.fed, colData = studyDesignfed, design = ~prey)
+ddsfed$prey <- relevel(ddsfed$prey, ref = "RS")
+keepfed <- rowSums(counts(ddsmc)) >= 10
+ddsfed <- ddsfed[keepfed,]
+ddsfed <- DESeq(ddsfed)
+filesstarve <- file.path(studyDesignstarve$sample, "quant.sf")
+filesstarve <- paste0('cleanMcquants/', sep = "", filesstarve)
+txi.starve <- tximport(filesstarve, type = "salmon", tx2gene = mcGenemap)
+ddsstarve <- DESeqDataSetFromTximport(txi.starve, colData = studyDesignstarve, design = ~prey)
+ddsstarve$prey <- relevel(ddsstarve$prey, ref = "RS")
+keepstarve <- rowSums(counts(ddsstarve)) >= 10
+ddsstarve <- ddsstarve[keepstarve,]
+ddsstarve <- DESeq(ddsstarve)
+```
+```{r results fed/starve RS control}
+resfed <- results(ddsfed)
+resultsNames(ddsfed)
+resstarve <- results(ddsstarve)
+resultsNames(ddsstarve)
+vsdfed <- vst(ddsfed, blind=FALSE)
+meanSdPlot(assay(vsdfed))
+vsdstarve <- vst(ddsstarve, blind=FALSE)
+meanSdPlot(assay(vsdstarve))
+resLFCfedCM <- lfcShrink(ddsfed, coef="prey_CM_vs_RS", type="apeglm")
+resLFCfedHP <- lfcShrink(ddsfed, coef="prey_HP_vs_RS", type="apeglm")
+resLFCfedSM <- lfcShrink(ddsfed, coef="prey_SM_vs_RS", type="apeglm")
+resLFCstarveCM <- lfcShrink(ddsstarve, coef="prey_CM_vs_RS", type="apeglm")
+resLFCstarveHP <- lfcShrink(ddsstarve, coef="prey_HP_vs_RS", type="apeglm")
+resLFCstarveSM <- lfcShrink(ddsstarve, coef="prey_SM_vs_RS", type="apeglm")
+setwd("~/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork")
+write.csv(as.data.frame(resLFCfedCM), file="results_fed_prey_CM_vs_RS.csv")
+write.csv(as.data.frame(resLFCfedHP), file="results_fed_prey_HP_vs_RS.csv")
+write.csv(as.data.frame(resLFCfedSM), file="results_fed_prey_SM_vs_RS.csv")
+write.csv(as.data.frame(resLFCstarveCM), file="results_starve_prey_CM_vs_RS.csv")
+write.csv(as.data.frame(resLFCstarveHP), file="results_starve_prey_HP_vs_RS.csv")
+write.csv(as.data.frame(resLFCstarveSM), file="results_starve_prey_RS_vs_RS.csv")
+```
+
+```{r format results and merge for seperated greens}
+resultsFedCM <- as.data.frame(resLFCfedCM)
+resultsFedHP <- as.data.frame(resLFCfedHP)
+resultsFedSM <- as.data.frame(resLFCfedSM)
+resultsStarveCM <- as.data.frame(resLFCstarveCM)
+resultsStarveHP <- as.data.frame(resLFCstarveHP)
+resultsStarveSM <- as.data.frame(resLFCstarveSM)
+
+resultsFedCM$knum <- rownames(resultsFedCM)
+resultsFedHP$knum <- rownames(resultsFedHP)
+resultsFedSM$knum <- rownames(resultsFedSM)
+resultsStarveCM$knum <- rownames(resultsStarveCM)
+resultsStarveHP$knum <- rownames(resultsStarveHP)
+resultsStarveSM$knum <- rownames(resultsStarveSM)
+
+resultsFedCM$treatment <- 'fed'
+resultsFedHP$treatment <- 'fed'
+resultsFedSM$treatment <- 'fed'
+resultsStarveCM$treatment <- 'starve'
+resultsStarveHP$treatment <- 'starve'
+resultsStarveSM$treatment <- 'starve'
+
+resultsFedCM[is.na(resultsFedCM)]<-"0"
+resultsFedHP[is.na(resultsFedHP)]<-"0"
+resultsFedCM[is.na(resultsFedCM)]<-"0"
+resultsStarveCM[is.na(resultsStarveCM)]<-"0"
+resultsStarveHP[is.na(resultsStarveHP)]<-"0"
+resultsStarveSM[is.na(resultsStarveSM)]<-"0"
+
+resultsFedCM$log2FoldChange <- as.numeric(resultsFedCM$log2FoldChange)
+resultsFedHP$log2FoldChange <- as.numeric(resultsFedHP$log2FoldChange)
+resultsFedSM$log2FoldChange <- as.numeric(resultsFedSM$log2FoldChange)
+resultsStarveCM$log2FoldChange <- as.numeric(resultsStarveCM$log2FoldChange)
+resultsStarveHP$log2FoldChange <- as.numeric(resultsStarveHP$log2FoldChange)
+resultsStarveSM$log2FoldChange <- as.numeric(resultsStarveSM$log2FoldChange)
+
+resultsFedCM1 <- resultsFedCM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsFedHP1 <- resultsFedHP %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsFedSM1 <- resultsFedSM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarveCM1 <- resultsStarveCM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarveHP1 <- resultsStarveHP %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarveSM1 <- resultsStarveSM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+
+FedStarveFullCM <- rbind(resultsFedCM1, resultsStarveCM1)
+FedStarveFullHP <- rbind(resultsFedHP1, resultsStarveHP1)
+FedStarveFullSM <- rbind(resultsFedSM1, resultsStarveSM1)
+
+FedStarveFullCM <- merge(totalKOrefmap, FedStarveFullCM, by=c('knum'))
+FedStarveFullHP <- merge(totalKOrefmap, FedStarveFullHP, by=c('knum'))
+FedStarveFullSM <- merge(totalKOrefmap, FedStarveFullSM, by=c('knum'))
+
+names(FedStarveFullCM)[names(FedStarveFullCM)=="log2FoldChange"] <- "fold"
+names(FedStarveFullHP)[names(FedStarveFullHP)=="log2FoldChange"] <- "fold"
+names(FedStarveFullSM)[names(FedStarveFullSM)=="log2FoldChange"] <- "fold"
+
+AnnoFedCM <- FedStarveFullCM %>% filter(treatment=='fed'& DifExp==1)
+AnnoFedHP <- FedStarveFullHP %>% filter(treatment=='fed'& DifExp==1)
+AnnoFedSM <- FedStarveFullSM %>% filter(treatment=='fed'& DifExp==1)
+AnnoStarveCM <- FedStarveFullCM %>% filter(treatment=='starve'& DifExp==1)
+AnnoStarveHP <- FedStarveFullHP %>% filter(treatment=='starve'& DifExp==1)
+AnnoStarveSM <- FedStarveFullSM %>% filter(treatment=='starve'& DifExp==1)
+```
+```{r fed starve histogram control RS}
+par(mfrow=c(2,3))
+library('gridExtra')
+library('cowplot')
+#layout(matrix(c(1,2,3,4,5,6),nrow=2,ncol=3,byrow=TRUE))
+alphaY <- .8		# transparencies for feeding treatments
+alphaN <- .1
+CM_fed <- rgb(39/255,123/255,69/255,alphaY)  # used digital colour meter to determine RGB values for colours chosen above
+CM_starve <- rgb(39/255,123/255,69/255,alphaN)
+HP_fed <- rgb(24/255,186/255,194/255,alphaY)
+HP_starve <- rgb(24/255,186/255,194/255,alphaN)
+RS_fed <- rgb(234/255,105/255,109/255,alphaY)
+RS_starve<- rgb(234/255,105/255,109/255,alphaN)
+SM_fed <- rgb(160/255,17/255,27/255,alphaY)
+SM_starve <- rgb(160/255,17/255,27/255,alphaN)
+
+histoCM <- ggplot(FedStarveFullCM, aes(x= fold)) + geom_histogram(data = AnnoFedCM, color="black", fill = CM_fed) + geom_histogram(data = AnnoStarveCM, color="black", fill = 'grey', alpha=.6)+theme_bw()+labs(title="CM vs RS", y ="", x = "") +xlim(-10, 10)+ylim(0,15)+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+histoHP <- ggplot(FedStarveFullHP, aes(x= fold)) + geom_histogram(data = AnnoFedHP, color="black", fill = HP_fed) + geom_histogram(data = AnnoStarveHP, color="black", fill = 'grey', alpha=.6) +theme_bw()+labs(title="HP vs RS", y ="", x = "")+xlim(-10, 10)+ylim(0,15)+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+histoSM <- ggplot(FedStarveFullSM, aes(x= fold)) + geom_histogram(data = AnnoFedSM, color="black", fill = SM_fed) + geom_histogram(data = AnnoStarveSM, color="black", fill = 'grey', alpha=.6) +theme_bw() +labs(title="SM vs RS", y ="", x = "")+xlim(-10, 10)+ylim(0,15)+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+densityCM <- ggplot(FedStarveFullCM, aes(x= fold)) + geom_density(data = AnnoFedCM, color="black", fill = CM_fed) + geom_density(data = AnnoStarveCM, color="black", fill = CM_starve) +theme_bw()+labs(title="CM vs RS", y ="", x = "")+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+densityHP <- ggplot(FedStarveFullHP, aes(x= fold)) + geom_density(data = AnnoFedHP,  color="black", fill = HP_fed) + geom_density(data = AnnoStarveHP, color="black", fill = HP_starve) +theme_bw() +labs(title="CM vs RS", y ="", x = "")+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+densitySM <- ggplot(FedStarveFullSM, aes(x= fold)) + geom_density(data = AnnoFedSM,  color="black", fill = SM_fed) + geom_density(data = AnnoStarveSM, color="black", fill = SM_starve) +theme_bw() +labs(title="CM vs RS", y ="", x = "")+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+```
+
+```{r loop block for composit histogram}
+integer_breaks <- function(n = 6, ...) {
+  fxn <- function(x) {
+    breaks <- floor(pretty(x, n, ...))
+    names(breaks) <- attr(breaks, "labels")
+    breaks
+  }
+  return(fxn)
+}
+
+deer <- c("09101 Carbohydrate metabolism","09102 Energy metabolism","09103 Lipid metabolism","09104 Nucleotide metabolism","09105 Amino acid metabolism","09106 Metabolism of other amino acids","09107 Glycan biosynthesis and metabolism","09108 Metabolism of cofactors and vitamins","09109 Metabolism of terpenoids and polyketides","09110 Biosynthesis of other secondary metabolites","09111 Xenobiotics biodegradation and metabolism","09112 Not included in regular maps","09121 Transcription","09183 Protein families: signaling and cellular processes","09191 Unclassified: metabolism","09192 Unclassified: genetic information processing","09193 Unclassified: signaling and cellular processes","09194 Poorly characterized","")
+
+#my_colors <- c("blue", "red", "purple")
+#names(my_colors) <- levels(factor(c(levels(Mastertable1$encoded))))
+for (elk in 1:18){
+  df <- FedStarveFullCM %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedCM %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveCM %>% filter(catagory==deer[elk])
+  print(assign(paste0("plotCM", elk), ggplot(df, aes(x= fold)) + geom_histogram(data = dfR, color="black", fill = CM_fed) +geom_histogram(data = dfG, color="black", fill = 'grey', alpha=.6) +theme_bw()+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())+labs(x='',y='')+xlim(-10, 10)+ylim(0,6)+labs(x='',y='')))
+}
+#+scale_y_continuous(breaks = integer_breaks())
+#+ylim(0,9)
+for (elk in 1:18){
+  df <- FedStarveFullHP %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedHP %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveHP %>% filter(catagory==deer[elk])
+  print(assign(paste0("plotHP", elk), ggplot(df, aes(x= fold)) + geom_histogram(data = dfR, color="black", fill = HP_fed) +geom_histogram(data = dfG, color="black", fill = 'grey', alpha=.6) +theme_bw()+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())+xlim(-10, 10)+ylim(0,6)+labs(x='',y='')))
+}
+
+for (elk in 1:18){
+  df <- FedStarveFullSM %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedSM %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveSM %>% filter(catagory==deer[elk])
+  print(assign(paste0("plotSM", elk), ggplot(df, aes(x= fold)) + geom_histogram(data = dfR, color="black", fill = SM_fed) +geom_histogram(data = dfG, color="black", fill = 'grey', alpha=.6) +theme_bw()+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())+xlim(-10, 10)+ylim(0,6)+labs(x='',y='')))
+}
+#make empty plots when no genes are present
+nonedf <- data.frame()
+empty <- ggplot(nonedf) + geom_point() + xlim(-10, 10) + ylim(0, 6)+theme_bw()+theme(axis.line = element_line(color='black'),
+    plot.background = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank())
+
+composit <- plot_grid(histoCM, histoHP, histoSM, plotCM1, plotHP1, plotSM1, plotCM8, plotHP8, plotSM8, plotCM13, plotHP13, plotSM13, plotCM14, plotHP14, plotSM14, nrow = 5, rel_heights = c(1/3, 1/6, 1/6, 1/6,1/6))
+#plot_grid(p1, p2, p3, align = "v", nrow = 3, rel_heights = c(1/4, 1/4, 1/2))
+#+labs(y='Number of Genes', title =deer[elk])))
+#plot(histoCM)
+#plot(histoHP)
+#plot(histoSM)
+#plot(densityCM)
+#plot(densityHP)
+#plot(densitySM)
+plot(composit)
+svg('compositHistogram6.svg')
+plot(composit)
+dev.off()
+```
+### DifExp Reds to each green 
+```{bash make the sample table}
+grep -e 'sample' studyDesign1.csv > StudyDesignHeader.csv
+grep 'red' studyDesign1.csv | grep 'fed' > StudyDesignRedFed.cvs
+grep 'CM' studyDesign1.csv | grep 'fed' > StudyDesignCMFed.cvs
+grep 'HP' studyDesign1.csv | grep 'fed' > StudyDesignHPFed.cvs
+cat StudyDesignHeader.csv StudyDesignRedFed.cvs StudyDesignCMFed.cvs > StudyDesignFedCM.csv
+cat StudyDesignHeader.csv StudyDesignRedFed.cvs StudyDesignHPFed.cvs > StudyDesignFedHP.csv
+grep 'red' studyDesign1.csv | grep 'starve' > StudyDesignRedStarve.cvs
+grep 'CM' studyDesign1.csv | grep 'starve' > StudyDesignCMStarve.cvs
+grep 'HP' studyDesign1.csv | grep 'starve' > StudyDesignHPStarve.cvs
+cat StudyDesignHeader.csv StudyDesignRedStarve.cvs StudyDesignCMStarve.cvs > StudyDesignStarveCM.csv
+cat StudyDesignHeader.csv StudyDesignRedStarve.cvs StudyDesignHPStarve.cvs > StudyDesignStarveHP.csv
+```
+```{r import fed and starve green seperated}
+StudyDesignFedCM <- read.delim("~/difExp/StudyDesignFedCM.csv", stringsAsFactors=TRUE)
+StudyDesignFedHP <- read.delim("~/difExp/StudyDesignFedHP.csv", stringsAsFactors=TRUE)
+StudyDesignStarveCM <- read.delim("~/difExp/StudyDesignStarveCM.csv", stringsAsFactors=TRUE)
+StudyDesignStarveHP <- read.delim("~/difExp/StudyDesignStarveHP.csv", stringsAsFactors=TRUE)
+
+setwd("~/difExp")
+
+filesfedCM <- file.path(StudyDesignFedCM$sample, "quant.sf")
+filesfedHP <- file.path(StudyDesignFedHP$sample, "quant.sf")
+filesfedCM <- paste0('cleanMcquants/', sep = "", filesfedCM)
+filesfedHP <- paste0('cleanMcquants/', sep = "", filesfedHP)
+
+txi.fedCM <- tximport(filesfedCM, type = "salmon", tx2gene = mcGenemap)
+txi.fedHP <- tximport(filesfedHP, type = "salmon", tx2gene = mcGenemap)
+ddsfedCM <- DESeqDataSetFromTximport(txi.fedCM, colData = StudyDesignFedCM, design = ~type)
+ddsfedHP <- DESeqDataSetFromTximport(txi.fedHP, colData = StudyDesignFedHP, design = ~type)
+
+ddsfedCM <- DESeq(ddsfedCM)
+ddsfedHP <- DESeq(ddsfedHP)
+
+filesstarveCM <- file.path(StudyDesignStarveCM$sample, "quant.sf")
+filesstarveHP <- file.path(StudyDesignStarveHP$sample, "quant.sf")
+filesstarveCM <- paste0('cleanMcquants/', sep = "", filesstarveCM)
+filesstarveHP <- paste0('cleanMcquants/', sep = "", filesstarveHP)
+
+txi.starveCM <- tximport(filesstarveCM, type = "salmon", tx2gene = mcGenemap)
+txi.starveHP <- tximport(filesstarveHP, type = "salmon", tx2gene = mcGenemap)
+ddsstarveCM <- DESeqDataSetFromTximport(txi.starveCM, colData = StudyDesignStarveCM, design = ~type)
+ddsstarveHP <- DESeqDataSetFromTximport(txi.starveHP, colData = StudyDesignStarveHP, design = ~type)
+ddsstarveCM <- DESeq(ddsstarveCM)
+ddsstarveHP <- DESeq(ddsstarveHP)
+```
+```{r results fed/starve green seperated}
+#resfed <- results(ddsfed)
+resultsNames(ddsfedCM)
+resultsNames(ddsfedHP)
+#resstarve <- results(ddsstarve)
+resultsNames(ddsstarveCM)
+resultsNames(ddsstarveHP)
+#vsdfed <- vst(ddsfed, blind=FALSE)
+#meanSdPlot(assay(vsdfed))
+#vsdstarve <- vst(ddsstarve, blind=FALSE)
+#meanSdPlot(assay(vsdstarve))
+resLFCfedCM <- lfcShrink(ddsfedCM, coef="type_red_vs_green", type="apeglm")
+resLFCfedHP <- lfcShrink(ddsfedHP, coef="type_red_vs_green", type="apeglm")
+resLFCstarveCM <- lfcShrink(ddsstarveCM, coef="type_red_vs_green", type="apeglm")
+resLFCstarveHP <- lfcShrink(ddsstarveHP, coef="type_red_vs_green", type="apeglm")
+setwd("~/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork")
+write.csv(as.data.frame(resLFCfedCM), file="results_fedCM_red_green.csv")
+write.csv(as.data.frame(resLFCfedHP), file="results_fedHP_red_green.csv")
+write.csv(as.data.frame(resLFCstarveCM), file="results_starveCM_red_green.csv")
+write.csv(as.data.frame(resLFCstarveHP), file="results_starveHP_red_green.csv")
+```
+```{r format results and merge for seperated greens}
+resultsFedCM <- as.data.frame(resLFCfedCM)
+resultsFedHP <- as.data.frame(resLFCfedHP)
+resultsStarveCM <- as.data.frame(resLFCstarveCM)
+resultsStarveHP <- as.data.frame(resLFCstarveHP)
+
+resultsFedCM$knum <- rownames(resultsFedCM)
+resultsFedHP$knum <- rownames(resultsFedHP)
+resultsStarveCM$knum <- rownames(resultsStarveCM)
+resultsStarveHP$knum <- rownames(resultsStarveHP)
+
+resultsFedCM$treatment <- 'fed'
+resultsFedHP$treatment <- 'fed'
+resultsStarveCM$treatment <- 'starve'
+resultsStarveHP$treatment <- 'starve'
+
+resultsFedCM[is.na(resultsFedCM)]<-"0"
+resultsFedHP[is.na(resultsFedHP)]<-"0"
+resultsStarveCM[is.na(resultsStarveCM)]<-"0"
+resultsStarveHP[is.na(resultsStarveHP)]<-"0"
+
+resultsFedCM$log2FoldChange <- as.numeric(resultsFedCM$log2FoldChange)
+resultsFedHP$log2FoldChange <- as.numeric(resultsFedHP$log2FoldChange)
+resultsStarveCM$log2FoldChange <- as.numeric(resultsStarveCM$log2FoldChange)
+resultsStarveHP$log2FoldChange <- as.numeric(resultsStarveHP$log2FoldChange)
+
+resultsFedCM1 <- resultsFedCM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsFedHP1 <- resultsFedHP %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarveCM1 <- resultsStarveCM %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+resultsStarveHP1 <- resultsStarveHP %>%
+  mutate(DifExp = c(0, 1)[(
+                                     (log2FoldChange <= -2 |log2FoldChange>=2) &
+                                     padj < 0.1)+1] )
+
+FedStarveFullCM <- rbind(resultsFedCM1, resultsStarveCM1)
+FedStarveFullHP <- rbind(resultsFedHP1, resultsStarveHP1)
+
+FedStarveFullCM <- merge(totalKOrefmap, FedStarveFullCM, by=c('knum'))
+FedStarveFullHP <- merge(totalKOrefmap, FedStarveFullHP, by=c('knum'))
+
+names(FedStarveFullCM)[names(FedStarveFullCM)=="log2FoldChange"] <- "fold"
+names(FedStarveFullHP)[names(FedStarveFullHP)=="log2FoldChange"] <- "fold"
+
+AnnoFedCM <- FedStarveFullCM %>% filter(treatment=='fed'& DifExp==1)
+AnnoFedHP <- FedStarveFullHP %>% filter(treatment=='fed'& DifExp==1)
+AnnoStarveCM <- FedStarveFullCM %>% filter(treatment=='starve'& DifExp==1)
+AnnoStarveHP <- FedStarveFullHP %>% filter(treatment=='starve'& DifExp==1)
+```
+```{r fed starve histogram seperated green}
+histoCM <- ggplot(FedStarveFullCM, aes(x= fold)) + geom_histogram(data = AnnoFedCM, color="black", fill = "red", alpha = 0.8) + geom_histogram(data = AnnoStarveCM, color="black", fill = "grey", alpha = 0.6) +theme_bw()
+plot(histoCM)
+histoHP <- ggplot(FedStarveFullHP, aes(x= fold)) + geom_histogram(data = AnnoFedHP, color="black", fill = "red", alpha = 0.8) + geom_histogram(data = AnnoStarveHP, color="black", fill = "grey", alpha = 0.6) +theme_bw()
+plot(histoHP)
+densityCM <- ggplot(FedStarveFullCM, aes(x= fold)) + geom_density(data = AnnoFedCM, color="black", fill = "red", alpha = 0.8) + geom_density(data = AnnoStarveCM, color="black", fill = "grey", alpha = 0.6) +theme_bw()
+plot(densityCM)
+densityHP <- ggplot(FedStarveFullHP, aes(x= fold)) + geom_density(data = AnnoFedHP,  color="black", fill = "red", alpha = 0.8) + geom_density(data = AnnoStarveHP, color="black", fill = "grey", alpha = 0.6) +theme_bw()
+plot(densityCM)
+test1 <- ggplot(AnnoFedCM, aes(x= fold)) + geom_histogram(color="black", fill = "red", alpha = 0.8) +theme_bw()
+plot(test1)
+test2 <- ggplot(AnnoStarveCM, aes(x= fold)) + geom_histogram(color="black", fill = "grey", alpha = 0.8) +theme_bw()
+plot(test2)
+
+```
+
+```{r loop for catagory CM}
+deer <- c("09101 Carbohydrate metabolism","09102 Energy metabolism","09103 Lipid metabolism","09104 Nucleotide metabolism","09105 Amino acid metabolism","09106 Metabolism of other amino acids","09107 Glycan biosynthesis and metabolism","09108 Metabolism of cofactors and vitamins","09109 Metabolism of terpenoids and polyketides","09110 Biosynthesis of other secondary metabolites","09111 Xenobiotics biodegradation and metabolism","09112 Not included in regular maps","09121 Transcription","09183 Protein families: signaling and cellular processes","09191 Unclassified: metabolism","09192 Unclassified: genetic information processing","09193 Unclassified: signaling and cellular processes","09194 Poorly characterized","")
+
+#my_colors <- c("blue", "red", "purple")
+#names(my_colors) <- levels(factor(c(levels(Mastertable1$encoded))))
+for (elk in 1:18){
+  df <- FedStarveFullCM %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedCM %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveCM %>% filter(catagory==deer[elk])
+  print(assign(paste0("plot", elk), ggplot(df, aes(x= fold)) + geom_density(data = dfR, color="black", fill = "red", alpha = 0.8) +geom_density(data = dfG, color="black", fill = "grey", alpha = 0.4) +theme_bw()+labs(y='Number of Genes', title =deer[elk])+facet_wrap(~deer[elk])))
+}
+for (elk in 1:18){
+  df <- FedStarveFullCM %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedCM %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveCM %>% filter(catagory==deer[elk])
+  print(assign(paste0("plot", elk), ggplot(df, aes(x= fold)) + geom_histogram(data = dfR, color="black",fill = "red", alpha = 0.8) +geom_histogram(data = dfG, color="black", fill = "grey", alpha = 0.4) +theme_bw()+labs(y='Number of Genes', title =deer[elk])+facet_wrap(~deer[elk])))
+}
+
+```
+```{r loop graph HP}
+for (elk in 1:18){
+  df <- FedStarveFullHP %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedHP %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveHP %>% filter(catagory==deer[elk])
+  print(assign(paste0("plot", elk), ggplot(df, aes(x= fold)) + geom_density(data = dfR, color="black", fill = "red", alpha = 0.8) +geom_density(data = dfG, color="black", fill = "grey", alpha = 0.4) +theme_bw()+labs(y='Number of Genes', title =deer[elk])+facet_wrap(~deer[elk])))
+}
+for (elk in 1:18){
+  df <- FedStarveFullHP %>% filter(catagory==deer[elk])
+  dfR <- AnnoFedHP %>% filter(catagory==deer[elk])
+  dfG <- AnnoStarveHP %>% filter(catagory==deer[elk])
+  print(assign(paste0("plot", elk), ggplot(df, aes(x= fold)) + geom_histogram(data = dfR, color="black", fill = "red", alpha = 0.8) +geom_histogram(data = dfG, color="black", fill = "grey", alpha = 0.4) +theme_bw()+labs(y='Number of Genes', title =deer[elk])+facet_wrap(~deer[elk])))
+}
+
+```
+```{r read porportions cil/prey}
+cilreadstats <- read.delim("~/cilreadstats.txt")
+allpreystats1 <- read.csv("~/allpreystats1.txt", sep="")
+Cilreads <- cilreadstats[,c(1,4)]
+preyreds <- allpreystats1[,c(1,4)]
+names(Cilreads)[names(Cilreads)=="num_seqs"] <- "cil"
+names(preyreds)[names(preyreds)=="num_seqs"] <- "prey"
+readstable <-merge(Cilreads,preyreds,by=c('file')) 
+readstable$cil <- as.numeric(gsub(",","",readstable$cil))
+readstable$prey <- as.numeric(gsub(",","",readstable$prey))
+readstable$total <- readstable$cil+readstable$prey
+readstable$file <- gsub(".fq","",readstable$file)
+names(readstable)[names(readstable)=="file"] <- "sample"
+readstatgroup <- merge(studyDesign1, readstable, by=c('sample'))
+readstatgroup$cilper <- (readstatgroup$cil/readstatgroup$total)*100
+readstatgroup$preyper <- (readstatgroup$prey.y/readstatgroup$total)*100
+Stackedbar <- ggplot(aes(x=month, y=count, fill=type)) + geom_col() + facet_grid(.~id)
+```
+# ```{r base r solution}
+# knumset <- unique(sort(AnnoRed$Knum))
+# AnnoRed$exp.diff.test <- NaN
+# for(i in 1:length(knumset)){
+#   subset <- AnnoRed[AnnoRed$Knum==knumset[i],]
+#   result <- any(subset$DifExp=='Yes',na.rm=T)
+#   AnnoRed[AnnoRed$Knum==knumset[i],]$exp.diff.test <- result
+# }
+# knumset1 <- unique(sort(AnnoGreen$Knum))
+# AnnoGreen$exp.diff.test <- NaN
+# for(i in 1:length(knumset1)){
+#   subset1 <- AnnoGreen[AnnoGreen$Knum==knumset1[i],]
+#   result1 <- any(subset$DifExp=='Yes',na.rm=T)
+#   AnnoGreen[AnnoGreen$Knum==knumset1[i],]$exp.diff.test <- result
+# }
+# FullAnno <- rbind(AnnoRed, AnnoGreen)
+# SubTable <- FullAnno %>% group_by(Knum) %>% filter(any(DifExp=='Yes'))
+# ```
+
+```{r,fig.width=4,fig.height=2.5}
+
+rel.exp <- distinct(AllSig)
+#rel.exp$Temp <- substr(rel.exp$pair,13,14)
+#rel.exp$EvAcc <- substr(rel.exp$pair,12,12)
+
+par(mar=c(3,4,1,1))
+layout(matrix(c(7,7,7,1,3,5,1,3,5,1,3,5,1,3,5,1,3,5,2,4,6,2,4,6,2,4,6,2,4,6,2,4,6,8,8,8),nrow=12,ncol=3,byrow=T))
+
+breakset <- seq(from = min(rel.exp$fold), to = max(rel.exp$fold),length.out=100)
+hist.red <- hist(rel.exp[rel.exp$type=='red',]$fold,breaks=breakset,col=rgb(1,0,0,.5),main='All differentially expressed genes',xlim=c(-10,10),xlab='',las=1,ylim=c(0,170))
+hist.green <- hist(rel.exp[rel.exp$type=='green',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+
+hist.coldevol <- hist(rel.exp[rel.exp$pair=='foldchange.E18.24',]$fold,breaks=breakset,col=rgb(0,0,1,.5),main='',xlim=c(-10,10),xlab=expression(log[2]~ Differential~ Expression),las=1,ylim=c(0,150))
+hist.coldctrl <- hist(rel.exp[rel.exp$pair=='foldchange.A18.24',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+mtext(expression(log[2]~ Differential~ Expression),side=1,line=2.5,cex=.7)
+
+
+breakset <- seq(from = min(rel.exp$fold), to = max(rel.exp$fold),length.out=100)
+hist.hotevol <- hist(rel.exp[rel.exp$pair=='foldchange.E30.24'&rel.exp$DifferentFromEvolved=='TRUE',]$fold,breaks=breakset,col=rgb(1,0,0,.5),main='"Evolved" Differential Expression',xlim=c(-10,10),xlab='',las=1)
+hist.hotctrl <- hist(rel.exp[rel.exp$pair=='foldchange.A30.24'&rel.exp$DifferentFromEvolved=='TRUE',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+
+hist.coldevol <- hist(rel.exp[rel.exp$pair=='foldchange.E18.24'&rel.exp$DifferentFromEvolved=='TRUE',]$fold,breaks=breakset,col=rgb(0,0,1,.5),main='',xlim=c(-10,10),xlab=expression(log[2]~ Differential~ Expression),las=1,ylim=c(0,110))
+hist.coldctrl <- hist(rel.exp[rel.exp$pair=='foldchange.A18.24'&rel.exp$DifferentFromEvolved=='TRUE',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+mtext(expression(log[2]~ Differential~ Expression),side=1,line=2.5,cex=.7)
+
+
+breakset <- seq(from = min(rel.exp$fold), to = max(rel.exp$fold),length.out=100,ylim=c(0,160))
+hist.hotevol <- hist(rel.exp[rel.exp$pair=='foldchange.E30.24'&rel.exp$DifferentFrom24=='TRUE',]$fold,breaks=breakset,col=rgb(1,0,0,.5),main='"Temperature" Diff. Expression',xlim=c(-10,10),xlab='',las=1)
+hist.hotctrl <- hist(rel.exp[rel.exp$pair=='foldchange.A30.24'&rel.exp$DifferentFrom24=='TRUE',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+
+hist.coldevol <- hist(rel.exp[rel.exp$pair=='foldchange.E18.24'&rel.exp$DifferentFrom24=='TRUE',]$fold,breaks=breakset,col=rgb(0,0,1,.5),main='',xlim=c(-10,10),xlab=expression(log[2]~ Differential~ Expression),las=1,ylim=c(0,135))
+hist.coldctrl <- hist(rel.exp[rel.exp$pair=='foldchange.A18.24'&rel.exp$DifferentFrom24=='TRUE',]$fold,breaks=breakset,add=T,col=rgb(0,0,0,.5),main='')
+abline(v=0,lwd=2)
+mtext(expression(log[2]~ Differential~ Expression),side=1,line=2.5,cex=.7)
+
+
+```
+```{bash format difexp}
+cd /difExp/paperWork/starvefed/
+grep -e 'geneNum' -e "^K" RSfedstarve.csv > RSfedstarveK.txt
+grep -e 'geneNum' -e "^K" CMstarveFed.csv > CMstarveFedK.txt
+grep -e 'geneNum' -e "^K" HPstarveFed.csv > HPstarveFedK.txt
+grep -e 'geneNum' -e "^K" SMstarveFed.csv > SMstarveFedK.txt
+```
+
+```{r import formated difexpres}
+CMstarveFedK <- read.delim("~/difExp/paperWork/starvefed/CMstarveFedK.txt")
+RSstarveFedK <- read.delim("~/difExp/paperWork/starvefed/RSfedstarveK.txt")
+HPstarveFedK <- read.delim("~/difExp/paperWork/starvefed/HPstarveFedK.txt")
+SMstarveFedK <- read.delim("~/difExp/paperWork/starvefed/SMstarveFedK.txt")
+HPstarveFedK$preyspecies <- 'HP'
+RSstarveFedK$preyspecies <- 'RS'
+CMstarveFedK$preyspecies <- 'CM'
+SMstarveFedK$preyspecies <- 'SM'
+HPup <- HPstarveFedK[HPstarveFedK$log2FoldChange>=0, ]
+HPdown <- HPstarveFedK[HPstarveFedK$log2FoldChange<=0, ]
+RSup <- RSstarveFedK[RSstarveFedK$log2FoldChange>=0, ]
+RSdown <- RSstarveFedK[RSstarveFedK$log2FoldChange<=0, ]
+CMup <- CMstarveFedK[CMstarveFedK$log2FoldChange>=0, ]
+CMdown <- CMstarveFedK[CMstarveFedK$log2FoldChange<=0, ]
+SMup <- SMstarveFedK[SMstarveFedK$log2FoldChange>=0, ]
+SMdown <- SMstarveFedK[SMstarveFedK$log2FoldChange<=0, ]
+up <- rbind(RSup, SMup)
+up <- rbind(up, CMup)
+up <- rbind(up, HPup)
+down <- rbind(RSdown, SMdown)
+down <- rbind(down, CMdown)
+down <- rbind(down, HPdown)
+names(up)[names(up)=="geneNum"] <- "Knum"
+names(down)[names(down)=="geneNum"] <- "Knum"
+tempupk <- merge(totalKOrefmap, up, by=c('Knum'))
+tempdownk <- merge(totalKOrefmap, down, by=c('Knum'))
+upksummary <- tempupk %>% group_by(catagory, specific, preyspecies) %>% tally()
+downksummary <- tempdownk %>% group_by(catagory, specific, preyspecies) %>% tally()
+downksummary$n <- downksummary$n*(-1)
+StarveFed4Graph <- rbind(upksummary, downksummary)
+deer <- c("09101 Carbohydrate metabolism","09102 Energy metabolism","09103 Lipid metabolism","09104 Nucleotide metabolism","09105 Amino acid metabolism","09106 Metabolism of other amino acids","09107 Glycan biosynthesis and metabolism","09108 Metabolism of cofactors and vitamins","09109 Metabolism of terpenoids and polyketides","09110 Biosynthesis of other secondary metabolites","09111 Xenobiotics biodegradation and metabolism","09112 Not included in regular maps","09121 Transcription","09183 Protein families: signaling and cellular processes","09191 Unclassified: metabolism","09192 Unclassified: genetic information processing","09193 Unclassified: signaling and cellular processes","09194 Poorly characterized","")
+counter = 1
+my_colors <- c("firebrick", "lightcoral", "seagreen", "turquoise3")  
+species <- factor(c("SM", "RS", "CM", "HP"))
+for (elk in 1:19){
+  print(deer[elk])
+  print(counter)
+  df <- StarveFed4Graph %>% filter(catagory==deer[elk])
+  assign(paste0("plot", elk), ggplot(df, aes(x=preyspecies, y=n, fill=preyspecies, alpha=0.5)) + scale_fill_manual(name = "Prey species", values = my_colors) +
+           geom_bar(stat="identity", position = position_stack()) + labs(y='Number of Genes', title = deer[elk])+facet_wrap(~specific)+theme_bw() +geom_hline(yintercept = 0)+coord_flip())
+  counter=counter+1
+}
+
+
+```
+```{r pca mc}
+my_colors <- c("firebrick", "lightcoral", "seagreen", "turquoise3")  
+species <- factor(c("SM", "RS", "CM", "HP"))
+alphaY <- 1		# transparencies for feeding treatments
+alphaN <- .1
+CM_fed <- rgb(39/255,123/255,69/255,alphaY)  # used digital colour meter to determine RGB values for colours chosen above
+CM_starve <- rgb(39/255,123/255,69/255,alphaN)
+HP_fed <- rgb(24/255,186/255,194/255,alphaY)
+HP_starve <- rgb(24/255,186/255,194/255,alphaN)
+RS_fed <- rgb(234/255,105/255,109/255,alphaY)
+RS_starve<- rgb(234/255,105/255,109/255,alphaN)
+SM_fed <- rgb(160/255,17/255,27/255,alphaY)
+SM_starve <- rgb(160/255,17/255,27/255,alphaN)
+
+preycolvec2 <- c(CM_fed,CM_starve,HP_fed,HP_starve,RS_fed,RS_starve,SM_fed,SM_starve)
+my_shapes <- c()
+my_scale <- scale_fill_manual(name = "prey", values = my_colors) 
+pcaDatamc <- plotPCA(vsdmc, intgroup=c("prey","state"), returnData=TRUE)
+percentVarmc <- 100 * attr(pcaDatamc, "percentVar")
+pcaDatamc <- pcaDatamc[pcaDatamc$state != 'recent', ]
+arch30 <- ggplot(pcaDatamc, aes(PC1, PC2, color=prey, shape=state)) + geom_point(size=3)+scale_shape_manual(values = c(16, 1))+ xlab(paste0("PC1: ",percentVarmc[1],"% variance")) + ylab(paste0("PC2: ",percentVarmc[2],"% variance")) + coord_fixed() + theme_bw()
+ell <- arch30+my_scale
+plot(ell)
+#ggsave(arch30, file="rmkdVersion/pca.pdf", width = 8.5, height = 11)
+```
+```{r pca mc}
+my_colors <- c("firebrick", "lightcoral", "seagreen", "turquoise3")  
+species <- factor(c("SM", "RS", "CM", "HP"))
+alphaY <- 1		# transparencies for feeding treatments
+alphaN <- .1
+CM_fed <- rgb(39/255,123/255,69/255,alphaY)  # used digital colour meter to determine RGB values for colours chosen above
+CM_starve <- rgb(39/255,123/255,69/255,alphaN)
+HP_fed <- rgb(24/255,186/255,194/255,alphaY)
+HP_starve <- rgb(24/255,186/255,194/255,alphaN)
+RS_fed <- rgb(234/255,105/255,109/255,alphaY)
+RS_starve<- rgb(234/255,105/255,109/255,alphaN)
+SM_fed <- rgb(160/255,17/255,27/255,alphaY)
+SM_starve <- rgb(160/255,17/255,27/255,alphaN)
+
+preycolvec2 <- c(CM_fed,CM_starve,HP_fed,HP_starve,RS_fed,RS_starve,SM_fed,SM_starve)
+my_shapes <- c()
+my_scale <- scale_fill_manual(name = "treatment", values = preycolvec2) 
+pcaDatamc <- plotPCA(vsdmc, intgroup=c("prey","state"), returnData=TRUE)
+percentVarmc <- round(100 * attr(pcaDatamc, "percentVar"))
+pcaDatamc <- pcaDatamc[pcaDatamc$state != 'recent', ]
+arch30 <- ggplot(pcaDatamc, aes(PC1, PC2, color=paste0(pcaDatamc$prey, sep="_", pcaDatamc$state))) + geom_point(size=3)+scale_shape_manual(values = c(16))+ xlab(paste0("PC1: ",percentVarmc[1],"% variance")) + ylab(paste0("PC2: ",percentVarmc[2],"% variance")) + coord_fixed() + theme_bw()
+ell1 <- arch30+my_scale
+plot(ell1)
+```
+
+# IMPORT DATA
+```{r holly block}
+Cfix.mult <- 0.01728178 # The multiplier 0.01728178 converts from electrons per chlorophyll molecule per second into pg C per pg chlorophyll-a per hour
+
+fire <- read.csv('/home/cpaight/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork/Mchamaeleon_4prey_Sept2020FIReData.csv')
+fire$ETR.C <- fire$ETR*Cfix.mult
+fire$ID <- paste(fire$Day,fire$Prey,fire$Fed,fire$Rep,sep='.')
+fire <- fire[fire$OldData!='Y',]
+
+dat <- read.csv('/home/cpaight/cpaightNAS/cpaight/data/Mchameleon/difExp/paperWork/Mchamaeleon_4prey_Sept2020PhysiolData.csv')
+#dat <- dat[dat$OldData!='Y',]
+
+
+# SET PLOTTING PARAMETERS (COLOURS)
+Acol <- 'red' # colour to plot rep A data
+Bcol <- 'blue' # colour to plot rep B data
+Ccol <- 'green' # colour to plot rep C data
+Fedcol <- 'black'
+Starvedcol <- 'gray80'
+Cryptocol <- 'gray50'
+
+SMcol <- 'firebrick'
+RScol <- 'lightcoral'
+CMcol <- 'seagreen'
+HPcol <- 'turquoise3'
+preycolvec <- c(CMcol,HPcol,RScol,SMcol)
+
+
+
+
+
+alphaY <- 1		# transparencies for feeding treatments
+alphaN <- .1
+CM.Y <- rgb(39/255,123/255,69/255,alphaY)  # used digital colour meter to determine RGB values for colours chosen above
+CM.N <- rgb(39/255,123/255,69/255,alphaN)
+HP.Y <- rgb(24/255,186/255,194/255,alphaY)
+HP.N <- rgb(24/255,186/255,194/255,alphaN)
+RS.Y <- rgb(234/255,105/255,109/255,alphaY)
+RS.N <- rgb(234/255,105/255,109/255,alphaN)
+SM.Y <- rgb(160/255,17/255,27/255,alphaY)
+SM.N <- rgb(160/255,17/255,27/255,alphaN)
+
+preycolvec2 <- c(CM.N,CM.Y,HP.N,HP.Y,RS.N,RS.Y,SM.N,SM.Y)
+
+```
+
+## Day 0 Analysis
+
+### FIRe Data
+
+```{r FIReAnalysis,fig.height = 6.5, fig.width = 11}
+
+pe.stats <- as.data.frame(unique(fire$ID))
+names(pe.stats) <- 'ID'
+pe.stats$Prey <- fire$Prey[match(pe.stats$ID,fire$ID)]
+pe.stats$Fed <- fire$Fed[match(pe.stats$ID,fire$ID)]
+pe.stats$Rep <- fire$Rep[match(pe.stats$ID,fire$ID)]
+pe.stats$Day <- fire$Day[match(pe.stats$ID,fire$ID)]
+pe.stats$Fv.Fm <- NA
+pe.stats$Pmax <- NA
+pe.stats$Pmax.err <- NA
+pe.stats$Pmax.p <- NA
+pe.stats$a <- NA
+pe.stats$a.err <- NA
+pe.stats$a.p <- NA
+
+PARset <- seq(from =0, to = 200, length.out = 100)  # Create a holding vector of light levels to use for plotting later
+
+for(i in 1:(dim(pe.stats)[1])){
+	if((i-1)%%30 == 0){   # plot results in 30-panel figures
+		par(mar=c(1,1,1,1),mfrow=c(5,6))
+	}
+	
+	subdat <- fire[fire$ID==pe.stats$ID[i],]   # Subset the data
+	if(pe.stats$Prey[i]=='RS'){subdat <- subdat[subdat$OldData!='Y',]}
+	if(pe.stats$Prey[i]=='HP'){subdat <- subdat[subdat$OldData!='Y',]}
+	
+	
+	plot(subdat$PAR, subdat$ETR,xlim=c(0,200),ylim=c(0,120)); text(max(PARset)*0.5,5,pe.stats$ID[i])  # Plot the raw data
+	
+	pe.stats$Fv.Fm[i] <- subdat[subdat$PAR==0,]$Fv.Fm # Save FvFm
+	nls.summ <- summary(nls(ETR ~ P * tanh(a * PAR / P), data= subdat, start = list(P = 100, a = 1.415)))   # Do curve fit
+	
+	pe.stats$Pmax[i] <- nls.summ$p[1,1]   # Save various statistical parameters
+	pe.stats$Pmax.err[i] <- nls.summ$p[1,2]
+	pe.stats$Pmax.p[i] <- nls.summ$p[1,4]
+	pe.stats$a[i] <- nls.summ$p[2,1]
+	pe.stats$a.err[i] <- nls.summ$p[2,2]
+	pe.stats$a.p[i] <- nls.summ$p[2,4]
+	
+	predictset <- pe.stats$Pmax[i]*tanh(pe.stats$a[i]*PARset/pe.stats$Pmax[i])  
+	lines(PARset,predictset, col='royalblue3')  # Overlay the curve fit
+}
+
+
+pe.stats$Ek <- pe.stats$Pmax / pe.stats$a
+pe.stats$P_I <- pe.stats$Pmax * tanh(pe.stats$a * 10 / pe.stats$Pmax)
+pe.stats$P_I.C <- pe.stats$P_I* Cfix.mult
+dat$ID <- paste(dat$Day,dat$Prey,dat$Fed,dat$Rep,sep='.')
+pe.stats$chl.p.cell <- dat[dat$OldData!='Y',]$Chl_pcell[match(pe.stats$ID,dat[dat$OldData!='Y',]$ID)]
+#pe.stats$chl.p.cell <- dat$Chl_pcell[match(pe.stats$ID,dat$ID)]
+pe.stats$P_I.cell <- pe.stats$P_I.C * pe.stats$chl.p.cell # pg C fixed per cell per hr
+pe.stats$C.p.cell <- dat$ngC_cell[match(pe.stats$ID,dat$ID)] # ng C per cell
+pe.stats$P_I.CtoC <- pe.stats$P_I.cell/pe.stats$C.p.cell/1000*12 # g C fixed per g C in a cell per day (note 12-hr light:dark cycle)
+
+```
+
+
+### Composite plot, Day 0
+```{r,fig.height=3,fig.width=6}
+library(sciplot)
+par(mar=c(4,4,1,1))
+layout(matrix(c(1,1,1,3,3,3,3,2,2,2,3,3,3,3),nrow=2,ncol=7,byrow=TRUE))
+
+bargraph.CI(Prey,Chl_pcell,data=dat[dat$Day==0&!is.na(dat$Day),],col=preycolvec,las=1,ylab='pg chl-a per cell',ylim=c(0,31))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,Fv.Fm,data=pe.stats[pe.stats$Day==0&!is.na(pe.stats$Day),],col=preycolvec,las=1,ylab='Fv/Fm',ylim=c(0,.63)); text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+fire.0 <- fire[fire$Day==0,]
+plot(fire.0$ETR~fire.0$PAR,pch=21,col=preycolvec[fire.0$Prey],bg=preycolvec[fire.0$Prey],xlab='PAR (umol quanta m-2 s-1)', ylab='ETR (e- chl-a-1 s-1)',las=1)
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.0 <- (pe.stats[pe.stats$Day==0 & !is.na(pe.stats$Day),])
+for(i in 1:dim(pe.stats.0)[1]){
+  predictset <- pe.stats.0$Pmax[i]*tanh(pe.stats.0$a[i]*PARset/pe.stats.0$Pmax[i])  
+  if(pe.stats.0$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.0$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.0$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.0$Prey[i]=='SM'){coluse <- SMcol}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5)
+}
+legend(x = -3, y = 108, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+```
+
+
+### Composite plot, Day 14
+```{r,fig.height=3,fig.width=6}
+par(mar=c(4,4,1,1))
+layout(matrix(c(1,1,1,3,3,3,3,2,2,2,3,3,3,3),nrow=2,ncol=7,byrow=TRUE))
+
+#bargraph.CI(Prey,Chl_pcell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='pg chl-a per cell',ylim=c(0,31))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,Fv.Fm,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Fv/Fm',ylim=c(0,.63)); #text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+bargraph.CI(Prey,P_I,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='ETR at Growth Irradiance',ylim=c(0,18));
+
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+fire.14 <- fire[fire$Day==14,]
+plot(fire.14$ETR~fire.14$PAR,pch=21,col=preycolvec[fire.14$Prey],bg=preycolvec[fire.14$Prey],xlab='PAR (umol quanta m-2 s-1)', ylab='ETR (e- chl-a-1 s-1)',las=1)
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.14 <- na.omit(pe.stats[pe.stats$Day==14,])
+for(i in 1:dim(pe.stats.14)[1]){
+  predictset <- pe.stats.14$Pmax[i]*tanh(pe.stats.14$a[i]*PARset/pe.stats.14$Pmax[i])  
+  if(pe.stats.14$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.14$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.14$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.14$Prey[i]=='SM'){coluse <- SMcol}
+  if(pe.stats.14$Fed[i]=='N'){lty.use=2}
+  if(pe.stats.14$Fed[i]=='Y'){lty.use=1}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5,lty=lty.use)
+}
+legend(x = -3, y = 108, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+```
+
+This is probably the most useful photophysiology plot. These data come from Day 14, so the starved treatments (light shaded bars and dashed lines) have been well and truly starved for a couple of weeks, and the fed cells should be quite fat and happy.
+
+Fv/Fm (upper left) is a measure of the photosynthetic health of the cell. Ranges from 0 to 1 but in practice we almost never see anything above 0.7 or so (even in non-kleptoplastidic stuff). So the fact that these guys are hovering around 0.5 when well-fed means they are really quite happy with life. This is generally consistent with the idea that M. chamaeleon engulfs these cryptophytes and then lets them do their own happy little thing inside their new cytoplasmic home. That starved cells would have reduced Fv/Fm is also unsurprising. We saw percent declines in Fv/Fm of about this magnitude in the new J. Phyc. paper as well.
+
+Electron transport rate at growth irradiance (lower left) is a measure of how many electrons these guys are pulling into their cells per molecule of chlorophyll. A calculation which scales by chlorophyll-per-cell can turn this into a cellular capacity for C fixation. It's kinda interesting that starved cells should be a bit higher for the red plastids, but I wouldn't put too much stock in it because their chlorophyll content will be way down.
+
+Finally, the panel on the right shows all the PE curves. It's a bit of a mess, but basically the dashed lines are for starved cells and solid are for fed. Everyone's PE curve is worse when starved except for those acclimated to HP (teal). That's (in my opinion) consistent with the NMDS plot that you made which showed shifts with starvation for all but HP -- except that in principle this PE curve is a measure of the *cryptophyte* side of things, not the ciliate, so make of that what you will. Maybe reduced photosynthesis = more carbon starvation = bigger shifts on the ciliate side which you see in that NMDS?
+
+```{r,fig.height=5,fig.width=3}
+
+
+par(mar=c(4,4,1,1),mfcol=c(4,1)) # Second figure: Fluorescence-based photophysiology
+
+bargraph.CI(Prey,Fv.Fm,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Fv/Fm',ylim=c(0,.63)); #text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+bargraph.CI(Prey,Pmax,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Max ETR',ylim=c(0,60));
+#TukeyHSD(aov(Pmax~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+bargraph.CI(Prey,a,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='alpha (phot. sensitivity)',ylim=c(0,2));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+bargraph.CI(Prey,P_I,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='ETR at Growth Irradiance',ylim=c(0,18));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+```
+
+Here's all the photophysiology parameters for the curve fit -- Fv/Fm again, then max ETR (the asymptote of the curves), alpha (the initial slope in the steepest part of the curves), and the ETR at growth irradiance (also seen above).
+
+
+```{r,fig.height=5,fig.width=3}
+par(mar=c(4,4,1,1),mfcol=c(3,1))  # First figure: Cellular C and N
+#layout(matrix(c(1,1,1,3,3,3,3,2,2,2,3,3,3,3),nrow=2,ncol=7,byrow=TRUE))
+
+bargraph.CI(Prey,ngC_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='ng C per cell',ylim=c(0,2.1))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,ngN_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='ng N per cell',ylim=c(0,.3))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,CN_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='C:N ratio',ylim=c(0,15))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+```
+ 
+
+
+```{r,fig.height=5,fig.width=3}
+par(mar=c(4,4,1,1),mfcol=c(4,1)) # Third figure: Carbon fixation
+
+bargraph.CI(Prey,Chl_pcell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='pg chl-a per cell',ylim=c(0,45))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,P_I.C,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='C fix per chl at Growth Irradiance',ylim=c(0,.28));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+bargraph.CI(Prey,P_I.cell,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='C fix per cell at Growth Irradiance',ylim=c(0,35*12/44));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+
+bargraph.CI(Prey,P_I.CtoC,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='C fix per cellular C per day',ylim=c(0,.6*12/44));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+```
+
+
+
+
+And the prey data for comparison:
+```{r,fig.height=5,fig.width=3}
+par(mar=c(4,4,1,1),mfcol=c(4,1)) # Third figure: Carbon fixation
+
+bargraph.CI(Prey,Chl_pcell,data=dat[dat$Fed=="Prey"&dat$Day==5,],col=preycolvec,las=1,ylab='pg chl-a per cell')
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,P_I.C,data=pe.stats[pe.stats$Fed=="Prey",],col=preycolvec,las=1,ylab='C fix per chl at Growth Irradiance');
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+bargraph.CI(Prey,P_I.cell,data=pe.stats[pe.stats$Fed=="Prey",],col=preycolvec,las=1,ylab='C fix per cell at Growth Irradiance',ylim=c(0,3*12/44));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+
+bargraph.CI(Prey,P_I.CtoC,data=pe.stats[pe.stats$Fed=="Prey",],col=preycolvec,las=1,ylab='C fix per cellular C per day',ylim=c(0,.6*12/44));
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+```
+
+Pretty standard to see HP photosynthesizing at lower rates than the others.
+
+
+## Population dynamics
+### Computing growth rates
+
+
+```{r new block of code}
+dat$ID <- paste(dat$Prey,dat$Fed,dat$Rep,sep='.')
+dat <- dat[dat$OldData!='Y',]
+growth <- as.data.frame(unique(dat$ID))
+names(growth) <- 'ID'
+growth$Prey <- dat$Prey[match(growth$ID,dat$ID)]
+growth$Fed <- dat$Fed[match(growth$ID,dat$ID)]
+growth$Rep <- dat$Rep[match(growth$ID,dat$ID)]
+growth$mu <- NA
+
+for(i in 1:dim(growth)[1]){
+  hold <- dat[dat$ID==growth$ID[i],]
+  if(hold$Fed[1]=='Prey'){ hold <- hold[hold$Day < 10,]
+    growth$mu[i] <- lm(log(hold$Prey.cellspermL)~hold$Day)$coef[2]
+  }else {
+    if(hold$Fed[1]=='N'){hold <- hold[hold$Day > 6,]}
+    if(hold$Fed[1]=='Y'){hold <- hold[hold$Day < 10,]}
+  growth$mu[i] <-lm(log(hold$MC.cellspermL)~hold$Day)$coef[2]
+  }
+}
+
+```
+
+
+```{r,fig.height=6,fig.width=6}
+library(Rmisc)
+library(pracma)
+par(mar=c(4,4,1,1))
+layout(matrix(c(2,2,2,1,1),nrow=5,ncol=1,byrow=TRUE))
+
+#bargraph.CI(Prey,Chl_pcell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='pg chl-a per cell',ylim=c(0,31))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,mu,group=Fed,data=growth[growth$Fed!='Prey',],col=preycolvec2,las=1,ylab='Initial Growth Rate',ylim=c(-.1,.35)); text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a'))
+#TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+MCsumm <- summarySE(data=dat[dat$Fed!='Prey',],'MC.cellspermL', groupvars=c('Day','Prey','Fed'))
+MCsumm$Fed <- droplevels(as.factor(MCsumm$Fed))
+plot(MCsumm[,5]~MCsumm$Day,pch=c(21,24)[MCsumm$Fed],col=c('gray50','black')[MCsumm$Fed],bg=preycolvec[MCsumm$Prey],las=1,xlab='Experimental Day',ylab='M. chamaeleon cells/mL',ylim=c(500,max(MCsumm[,5]+MCsumm$se)),type='n',xlim=c(0,14),log='y')
+arrows(MCsumm$Day,MCsumm[,5]+MCsumm$se,MCsumm$Day,MCsumm[,5]-MCsumm$se,angle=90,length=0.05,code=3,col=c('gray50','black')[MCsumm$Fed])
+preyset <- c('CM','HP','RS','SM')
+fedset <- c('N','Y')
+for(i in 1:length(preyset)){
+  for(j in 1:length(fedset)){
+    hold <- MCsumm[MCsumm$Prey==preyset[i]&MCsumm$Fed==fedset[j],]
+    if(hold$Prey[1]=='CM'){coluse <- CMcol}
+    if(hold$Prey[1]=='HP'){coluse <- HPcol}
+    if(hold$Prey[1]=='RS'){coluse <- RScol}
+    if(hold$Prey[1]=='SM'){coluse <- SMcol}
+    if(hold$Fed[1]=='Y'){ltyuse <- 1}
+    if(hold$Fed[1]=='N'){ltyuse <- 2}
+    lines(hold$Day,hold[,5],col=coluse,lty=ltyuse)
+  }
+}
+
+
+points(MCsumm[,5]~MCsumm$Day,pch=c(21,22)[MCsumm$Fed],col=c('gray50','black')[MCsumm$Fed],bg=preycolvec[MCsumm$Prey],cex=1.2)
+
+legend(x = 10, y = 1000, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1.2)
+
+
+```
+
+And finally, here are the growth rates. Look how fricken delighted with themselves the RS-acclimated cells are, even when they're being starved. These growth rates are only for the first few days, but it still blows my mind that they've really taken off like that.
+
+
+For comparison, here's what the prey are up to (pretty similar to one another at this light level):
+
+```{r}
+bargraph.CI(Prey,mu,data=growth[growth$Fed=="Prey",],las=1,xlab='Prey species',ylab='Prey growth rate, per day',col=preycolvec)
+```
+
+
+
+
+```{r,fig.height=3,fig.width=6}
+par(mar=c(4,4,1,1))
+layout(matrix(c(1,1,1,3,3,3,3,2,2,2,3,3,3,3),nrow=2,ncol=7,byrow=TRUE))
+
+#bargraph.CI(Prey,Chl_pcell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='pg chl-a per cell',ylim=c(0,31))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+bargraph.CI(Prey,mu,group=Fed,data=growth[growth$Fed!='Prey',],col=preycolvec2,las=1,ylab='Initial Growth Rate (per day)',ylim=c(-.05,.35),err.width=0.02);
+
+#bargraph.CI(Prey,Fv.Fm,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Fv/Fm',ylim=c(0,.63)); #text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+bargraph.CI(Prey,P_I.CtoC,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Carbon Fixation (g C per g C per day)',ylim=c(0,.17),err.width=.02);
+
+#TukeyHSD(aov(P_I~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+#text(c(.7,1.9,3.1,4.3),c(.49,.58,.52,.49)+.02,c('a','b','c','a')); #TukeyHSD(aov(Fv.Fm~Prey,data=pe.stats))
+
+
+fire.14 <- fire[fire$Day==14,]
+fire.14 <- fire.14[!is.na(fire.14$Day),]
+fire.14$Fed2 <- fire.14$Fed
+fire.14[fire.14$Fed=='Y',]$Fed2 <- 'A'
+fire.14$Prey.Fed <- paste(fire.14$Prey,fire.14$Fed2,sep='.')
+plot(fire.14$ETR.C~fire.14$PAR,pch=21,col=preycolvec[fire.14$Prey],bg=preycolvec2[as.factor(fire.14$Prey.Fed)],xlab='PAR (umol quanta m-2 s-1)', ylab='C fixation (g C per g chl-a per h)',las=1)
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.14 <- na.omit(pe.stats[pe.stats$Day==14,])
+for(i in 1:dim(pe.stats.14)[1]){
+  predictset <- pe.stats.14$Pmax[i]*tanh(pe.stats.14$a[i]*PARset/pe.stats.14$Pmax[i]) * Cfix.mult 
+  if(pe.stats.14$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.14$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.14$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.14$Prey[i]=='SM'){coluse <- SMcol}
+  if(pe.stats.14$Fed[i]=='N'){lty.use=2}
+  if(pe.stats.14$Fed[i]=='Y'){lty.use=1}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5,lty=lty.use)
+}
+legend(x = -3, y = 65, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+```
+
+
+### Comparisons between M. chamaeleon and prey
+
+
+
+```{r Fig-Comparison,fig.height=6,fig.width=8}
+
+par(mar=c(4,4,1,1),mfrow=c(3,2))
+xcoords <- c(.8,1.8,3.1,4.1,5.4,6.4,7.7,8.7)
+xcoords2 <- c(1.3,3.6,5.9,8.2)
+
+
+# Panel A: Growth Rates
+bargraph.CI(Prey,mu,group=Fed,data=growth[growth$Fed!='Prey',],col=preycolvec2,las=1,ylab='Initial Growth Rate (per day)',ylim=c(-.125,.4),err.width=0.05,space=c(0,.3)); text(xcoords,c(0.02,.235,0.02,.235,0.07,.345,0.02,0.375),c('a','b','a','b','c','d','a','d')); text(0.2,.38,'A',cex=1.5)
+#lines(c(.8,1.8),rep(mean(growth[growth$Fed=='Prey'&growth$Prey=='CM',]$mu),2))
+preymu <- summarySE(data=growth[growth$Fed=='Prey',],"mu","Prey")
+arrows(xcoords2,preymu$mu-preymu$se,xcoords2,preymu$mu+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$mu,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+#TukeyHSD(aov(mu~Fed*Prey,data=growth[growth$Fed!='Prey',]))
+
+# Panel B: Fv/Fm
+bargraph.CI(Prey,Fv.Fm,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='Photosynth. Efficiency (Fv/Fm)',ylim=c(0,.6),err.width=0.05,space=c(0,.3)); text(0.2,.56,'B',cex=1.5); text(xcoords,c(.32,.515,.28,.55,.43,.555,.32,.565),c('a','b','c','d','e','d','a','d'))
+#TukeyHSD(aov(Fv.Fm~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+preymu <- summarySE(data=pe.stats[pe.stats$Fed=='Prey'&pe.stats$Day==5&!is.na(pe.stats$Day),],"Fv.Fm","Prey")
+arrows(xcoords2,preymu$Fv.Fm-preymu$se,xcoords2,preymu$Fv.Fm+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$Fv.Fm,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+# Panel C: Pmax per chl
+pe.stats$Pmax.C <- pe.stats$Pmax*Cfix.mult
+bargraph.CI(Prey,Pmax.C,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='P_max (g C per g chl-a per h)',ylim=c(0,1.15),err.width=0.05,space=c(0,.3)); text(0.2,1.1,'C',cex=1.5); text(xcoords,c(.42,.69,.38,.36,.55,1.105,.81,1.01),c('a','b','a','a','c','d','e','d'))
+#TukeyHSD(aov(Pmax.C~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+preymu <- summarySE(data=pe.stats[pe.stats$Fed=='Prey'&pe.stats$Day==5&!is.na(pe.stats$Day),],"Pmax.C","Prey")
+arrows(xcoords2,preymu$Pmax.C-preymu$se,xcoords2,preymu$Pmax.C+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$Pmax.C,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+# Panel D: Chl per cell
+bargraph.CI(Prey,Chl_pcell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='Chl-a per cell (pg)',ylim=c(0,47),err.width=0.05,space=c(0,.3)); text(0.2,45,'D',cex=1.5); text(xcoords,c(19,20,10,25,14,45,13,42.5),c('ab','a','cd','ac','b','e','bd','e'))
+#TukeyHSD(aov(Chl_pcell~Fed*Prey,data=dat[dat$Day==14&!is.na(dat$Day),]))
+preymu <- summarySE(data=dat[dat$Fed=="Prey"&!is.na(dat$Day),],"Chl_pcell","Prey",na.rm=TRUE)
+arrows(xcoords2,preymu$Chl_pcell-preymu$se,xcoords2,preymu$Chl_pcell+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$Chl_pcell,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+
+# Panel E: C fix per carbon
+pe.stats$Pmax.C <- pe.stats$Pmax*Cfix.mult
+bargraph.CI(Prey,P_I.CtoC,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='P_I (g C per g C per d)',ylim=c(0,0.17),err.width=0.05,space=c(0,.3)); text(0.2,.163,'E',cex=1.5); text(xcoords,c(.026,.06,.05,.11,.105,.165,.054,.155),c('a','b','ab','c','c','d','b','d')) 
+#TukeyHSD(aov(P_I.CtoC~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+preymu <- summarySE(data=pe.stats[pe.stats$Fed=='Prey'&pe.stats$Day==5&!is.na(pe.stats$Day),],"P_I.CtoC","Prey")
+arrows(xcoords2,preymu$P_I.CtoC-preymu$se,xcoords2,preymu$P_I.CtoC+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$P_I.CtoC,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+
+# Panel F: C fix per cell
+pe.stats$Pmax.C <- pe.stats$Pmax*Cfix.mult
+bargraph.CI(Prey,P_I.cell,group=Fed,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),],col=preycolvec2,las=1,ylab='P_I (g C per cell per d)',ylim=c(0,9.55),err.width=0.05,space=c(0,.3)); text(0.2,9.1,'F',cex=1.5); text(xcoords,c(3.2,4.8,1.8,5.8,3.3,9.3,2.8,8.8),c('a','b','c','b','a','d','ac','d')) 
+#TukeyHSD(aov(P_I.cell~Fed*Prey,data=pe.stats[pe.stats$Day==14&!is.na(pe.stats$Day),]))
+preymu <- summarySE(data=pe.stats[pe.stats$Fed=='Prey'&pe.stats$Day==5&!is.na(pe.stats$Day),],"P_I.cell","Prey")
+arrows(xcoords2,preymu$P_I.cell-preymu$se,xcoords2,preymu$P_I.cell+preymu$se,angle=90,code=3,length=0.1); points(xcoords2,preymu$P_I.cell,bg=preycolvec[preymu$Prey],pch=23,cex=1.2)
+
+```
+
+
+```{r SuppFig-CN, fig.height=4,fig.width=4}
+# Left column: M. chamaeleon; Right column: Prey
+par(mar=c(4,4,1,1))  
+
+layout(matrix(c(1,1,1,4,4,2,2,2,5,5,3,3,3,6,6),nrow=3,ncol=5,byrow=TRUE))
+
+
+# MC cellular C
+bargraph.CI(Prey,ngC_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='ng C per cell',ylim=c(0,2.1),main='M. chamaeleon')
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+# MC cellular N
+bargraph.CI(Prey,ngN_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='ng N per cell',ylim=c(0,.3))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+# MC C:N ratio
+bargraph.CI(Prey,CN_cell,group=Fed,data=dat[dat$Day==14&!is.na(dat$Day),],col=preycolvec2,las=1,ylab='C:N ratio',ylim=c(0,28))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+
+# Prey cellular C
+bargraph.CI(Prey,ngC_cell,data=dat[dat$Fed=='Prey'&!is.na(dat$Day),],col=preycolvec,las=1,ylab='ng C per cell',ylim=c(0,.1),main='Prey')
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,ngN_cell,data=dat[dat$Fed=='Prey'&!is.na(dat$Day),],col=preycolvec,las=1,ylab='ng N per cell',ylim=c(0,.04))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+bargraph.CI(Prey,CN_cell,data=dat[dat$Fed=='Prey'&!is.na(dat$Day),],col=preycolvec,las=1,ylab='C:N ratio',ylim=c(0,10))
+#TukeyHSD(aov(Chl_pcell~Prey,data=dat))
+
+
+```
+
+
+
+
+```{r SuppFig-popdyn,fig.height=2.5,fig.width=4}
+par(mar=c(4,4,1,1))
+#layout(matrix(c(2,2,2,1,1),nrow=5,ncol=1,byrow=TRUE))
+
+
+MCsumm <- summarySE(data=dat[dat$Fed!='Prey',],'MC.cellspermL', groupvars=c('Day','Prey','Fed'))
+MCsumm$Fed <- droplevels(as.factor(MCsumm$Fed))
+plot(MCsumm[,5]~MCsumm$Day,pch=c(21,24)[MCsumm$Fed],col=c('gray50','black')[MCsumm$Fed],bg=preycolvec[MCsumm$Prey],las=1,xlab='Experimental Day',ylab='M. chamaeleon cells/mL',ylim=c(500,max(MCsumm[,5]+MCsumm$se)),type='n',xlim=c(0,14),log='y')
+arrows(MCsumm$Day,MCsumm[,5]+MCsumm$se,MCsumm$Day,MCsumm[,5]-MCsumm$se,angle=90,length=0.05,code=3,col=c('gray50','black')[MCsumm$Fed])
+preyset <- c('CM','HP','RS','SM')
+fedset <- c('N','Y')
+for(i in 1:length(preyset)){
+  for(j in 1:length(fedset)){
+    hold <- MCsumm[MCsumm$Prey==preyset[i]&MCsumm$Fed==fedset[j],]
+    if(hold$Prey[1]=='CM'){coluse <- CMcol}
+    if(hold$Prey[1]=='HP'){coluse <- HPcol}
+    if(hold$Prey[1]=='RS'){coluse <- RScol}
+    if(hold$Prey[1]=='SM'){coluse <- SMcol}
+    if(hold$Fed[1]=='Y'){ltyuse <- 1}
+    if(hold$Fed[1]=='N'){ltyuse <- 2}
+    lines(hold$Day,hold[,5],col=coluse,lty=ltyuse)
+  }
+}
+
+
+points(MCsumm[,5]~MCsumm$Day,pch=c(21,22)[MCsumm$Fed],col=c('gray50','black')[MCsumm$Fed],bg=preycolvec[MCsumm$Prey],cex=1.2)
+
+legend(x = 10, y = 1200, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1.2)
+
+
+```
+
+
+```{r SuppFig-PI-2, fig.width=3,fig.height=2.8, echo=FALSE}
+
+fire.14 <- fire[fire$Day==14,]
+fire.14 <- fire.14[!is.na(fire.14$Day),]
+fire.14$Fed2 <- fire.14$Fed
+fire.14[fire.14$Fed=='Y',]$Fed2 <- 'A'
+fire.14$Prey.Fed <- paste(fire.14$Prey,fire.14$Fed2,sep='.')
+plot(fire.14$ETR.C~fire.14$PAR,pch=21,col=preycolvec[fire.14$Prey],bg=preycolvec2[as.factor(fire.14$Prey.Fed)],xlab='PAR (umol quanta m-2 s-1)', ylab='C fixation (g C per g chl-a per h)',las=1)
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.14 <- na.omit(pe.stats[pe.stats$Day==14,])
+for(i in 1:dim(pe.stats.14)[1]){
+  predictset <- pe.stats.14$Pmax[i]*tanh(pe.stats.14$a[i]*PARset/pe.stats.14$Pmax[i]) * Cfix.mult 
+  if(pe.stats.14$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.14$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.14$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.14$Prey[i]=='SM'){coluse <- SMcol}
+  if(pe.stats.14$Fed[i]=='N'){lty.use=2}
+  if(pe.stats.14$Fed[i]=='Y'){lty.use=1}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5,lty=lty.use)
+}
+legend(x = -3, y = 65*Cfix.mult, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+```
+
+
+```{r SuppFig-PI, fig.width=6,fig.height=2.8, echo=FALSE}
+
+par(mar=c(4,4,1,1),mfrow=c(1,2))
+
+fire.14 <- fire[fire$Day==14,]
+fire.14 <- fire.14[!is.na(fire.14$Day),]
+fire.14$Fed2 <- fire.14$Fed
+fire.14[fire.14$Fed=='Y',]$Fed2 <- 'A'
+fire.14$Prey.Fed <- paste(fire.14$Prey,fire.14$Fed2,sep='.')
+plot(fire.14$ETR.C~fire.14$PAR,pch=21,col=preycolvec[fire.14$Prey],bg=preycolvec2[as.factor(fire.14$Prey.Fed)],xlab='PAR (umol quanta m-2 s-1)', ylab='C fixation (g C per g chl-a per h)',las=1)
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.14 <- na.omit(pe.stats[pe.stats$Day==14,])
+for(i in 1:dim(pe.stats.14)[1]){
+  predictset <- pe.stats.14$Pmax[i]*tanh(pe.stats.14$a[i]*PARset/pe.stats.14$Pmax[i]) * Cfix.mult 
+  if(pe.stats.14$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.14$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.14$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.14$Prey[i]=='SM'){coluse <- SMcol}
+  if(pe.stats.14$Fed[i]=='N'){lty.use=2}
+  if(pe.stats.14$Fed[i]=='Y'){lty.use=1}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5,lty=lty.use)
+}
+legend(x = -3, y = 65*Cfix.mult, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+
+plot(fire.14$ETR.C~jitter(fire.14$PAR),pch=21,col=preycolvec[fire.14$Prey],bg=preycolvec2[as.factor(fire.14$Prey.Fed)],xlab='PAR (umol quanta m-2 s-1)', ylab='C fixation (g C per g chl-a per h)',las=1,xlim=c(0,20),ylim=c(0,.3))
+PARset <- seq(from =0, to = 200, length.out = 100)
+pe.stats.14 <- na.omit(pe.stats[pe.stats$Day==14,])
+for(i in 1:dim(pe.stats.14)[1]){
+  predictset <- pe.stats.14$Pmax[i]*tanh(pe.stats.14$a[i]*PARset/pe.stats.14$Pmax[i]) * Cfix.mult 
+  if(pe.stats.14$Prey[i]=='CM'){coluse <- CMcol}
+  if(pe.stats.14$Prey[i]=='HP'){coluse <- HPcol}
+  if(pe.stats.14$Prey[i]=='RS'){coluse <- RScol}
+  if(pe.stats.14$Prey[i]=='SM'){coluse <- SMcol}
+  if(pe.stats.14$Fed[i]=='N'){lty.use=2}
+  if(pe.stats.14$Fed[i]=='Y'){lty.use=1}
+  
+	lines(PARset,predictset, col=coluse,lwd=.5,lty=lty.use)
+}
+legend(x = -3, y = 65*Cfix.mult, legend=c('C. mesostigmatica','H. pacifica','R. salina','S. major'), pch=21,pt.bg=preycolvec,pt.cex=1/.9,col=preycolvec,cex=.9)
+
+```
+
+
+
+
+
+PCA for M. chamaeleon
+```{r, fig.height=4, fig.width=4}
+# COMPILE DATA
+PCA.dat <- growth[growth$Fed!='Prey',]
+PCA.dat$Fed2 <- PCA.dat$Fed
+PCA.dat[PCA.dat$Fed=='Y',]$Fed2 <- 'A'
+PCA.dat$Prey.Fed <- paste(PCA.dat$Prey,PCA.dat$Fed2,sep='.')
+
+subdat <- dat[dat$Day==14,]
+subpe <- pe.stats[pe.stats$Day==14,]
+subpe$ID <- paste(subpe$Prey,subpe$Fed,subpe$Rep,sep='.')
+PCA.dat$Chl_pcell <- subdat$Chl_pcell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngC_cell <- subdat$ngC_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngN_cell <- subdat$ngN_cell[match(PCA.dat$ID,subdat$ID)]
+#PCA.dat$CN_cell <- subdat$CN_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$Fv.Fm <- subpe$Fv.Fm[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$Pmax <- subpe$Pmax[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$a <- subpe$a[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$Ek <- subpe$Ek[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$P_I <- subpe$P_I[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$P_I.cell <- subpe$P_I.cell[match(PCA.dat$ID,subpe$ID)]
+
+# RUN PRINCIPLE COMPONENT ANALYSIS
+PCA.all <- prcomp(PCA.dat[,c(5,8:dim(PCA.dat)[2])],center=TRUE,scale.=TRUE)
+#summary(PCA.all)
+
+# MAKE PLOTS
+#par(mar=c(4,4,1,1),mfrow=c(1,2))
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec2[as.factor(PCA.dat$Prey.Fed)],pch=21, cex=1,las=1, xlim=c(-3,3), ylim = c(-3,3)); expansionfac <- 3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac = expansionfac*1.1
+#text(PCA.all$rotation[,1]*expansionfac*1.1,PCA.all$rotation[,2]*expansionfac*1.1,labels=names(PCA.all$scale),cex=.8)
+text(PCA.all$rotation[,1]*expansionfac,PCA.all$rotation[,2]*expansionfac,labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','alpha','P_I'),cex=.7)
+
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec2[as.factor(PCA.dat$Prey.Fed)],pch=21, cex=1,las=1, xlim=c(-3,3), ylim = c(-3,3)); expansionfac <- 4.3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac <- expansionfac*1.1; text(PCA.all$rotation[,1]*expansionfac+c(-.2,0,0,0,-.2,-.2,0.05,0),PCA.all$rotation[,2]*expansionfac+c(0,+0.01,0,-.1,0,.05,-.1,-.05),labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','a','P_I'),cex=.6)
+
+biplot(PCA.all,col=c('black','red'),pch=21)
+```
+
+
+PCA for prey
+```{r, fig.height=3, fig.width=3}
+# COMPILE DATA
+PCA.dat <- growth[growth$Fed=='Prey',]
+
+subdat <- dat[dat$Day==5&dat$Fed=='Prey',]
+subpe <- pe.stats[pe.stats$Day==5&pe.stats$Fed=='Prey',]
+subpe$ID <- paste(subpe$Prey,subpe$Fed,subpe$Rep,sep='.')
+PCA.dat$Chl_pcell <- subdat$Chl_pcell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngC_cell <- subdat$ngC_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngN_cell <- subdat$ngN_cell[match(PCA.dat$ID,subdat$ID)]
+#PCA.dat$CN_cell <- subdat$CN_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$Fv.Fm <- subpe$Fv.Fm[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$Pmax <- subpe$Pmax[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$a <- subpe$a[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$Ek <- subpe$Ek[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$P_I <- subpe$P_I[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$P_I.cell <- subpe$P_I.cell[match(PCA.dat$ID,subpe$ID)]
+PCA.dat[PCA.dat$Prey=='HP' & PCA.dat$Rep=='B',]$ngN_cell <- mean(PCA.dat[PCA.dat$Prey=='HP',]$ngN_cell,na.rm=TRUE) # replace NA value with the mean of the other two values
+
+# RUN PRINCIPLE COMPONENT ANALYSIS
+PCA.all <- prcomp(PCA.dat[,c(5:dim(PCA.dat)[2])],center=TRUE,scale.=TRUE)
+#summary(PCA.all)
+
+# MAKE PLOTS
+#par(mar=c(4,4,1,1),mfrow=c(1,2))
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec[as.factor(PCA.dat$Prey)],pch=21, cex=1,las=1, xlim=c(-3,4), ylim = c(-2.5,2.5)); expansionfac <- 3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac = expansionfac*1.1
+#text(PCA.all$rotation[,1]*expansionfac*1.1,PCA.all$rotation[,2]*expansionfac*1.1,labels=names(PCA.all$scale),cex=.8)
+text(PCA.all$rotation[,1]*expansionfac,PCA.all$rotation[,2]*expansionfac,labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','alpha','P_I'),cex=.7)
+
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec[as.factor(PCA.dat$Prey)],pch=21, cex=1,las=1, xlim=c(-3,4), ylim = c(-3,2)); expansionfac <- 4.3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac <- expansionfac*1.1; text(PCA.all$rotation[,1]*expansionfac+c(-.2,0,0,0,-.2,-.2,0.05,0),PCA.all$rotation[,2]*expansionfac+c(0,+0.01,0,-.1,0,.05,-.1,-.05),labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','a','P_I'),cex=.6)
+
+biplot(PCA.all,col=c('black','red'),pch=21)
+```
+
+
+
+Composite PCA
+```{r, fig.height=2,fig.width=4}
+# SET UP FIGURE
+par(mar=c(4,4,1,1),mfrow=c(1,2))
+
+# COMPILE DATA FOR PREY
+PCA.dat <- growth[growth$Fed=='Prey',]
+
+subdat <- dat[dat$Day==5&dat$Fed=='Prey',]
+subpe <- pe.stats[pe.stats$Day==5&pe.stats$Fed=='Prey',]
+subpe$ID <- paste(subpe$Prey,subpe$Fed,subpe$Rep,sep='.')
+PCA.dat$Chl_pcell <- subdat$Chl_pcell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngC_cell <- subdat$ngC_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngN_cell <- subdat$ngN_cell[match(PCA.dat$ID,subdat$ID)]
+#PCA.dat$CN_cell <- subdat$CN_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$Fv.Fm <- subpe$Fv.Fm[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$Pmax <- subpe$Pmax[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$a <- subpe$a[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$Ek <- subpe$Ek[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$P_I <- subpe$P_I[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$P_I.cell <- subpe$P_I.cell[match(PCA.dat$ID,subpe$ID)]
+PCA.dat[PCA.dat$Prey=='HP' & PCA.dat$Rep=='B',]$ngN_cell <- mean(PCA.dat[PCA.dat$Prey=='HP',]$ngN_cell,na.rm=TRUE) # replace NA value with the mean of the other two values
+
+# RUN PRINCIPLE COMPONENT ANALYSIS
+PCA.all <- prcomp(PCA.dat[,c(5:dim(PCA.dat)[2])],center=TRUE,scale.=TRUE)
+#summary(PCA.all)
+
+# MAKE PLOT
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec[as.factor(PCA.dat$Prey)],pch=21, cex=1,las=1, xlim=c(-3,4), ylim = c(-3,2)); expansionfac <- 4.3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac <- expansionfac*1.1; text(PCA.all$rotation[,1]*expansionfac+c(-.2,0,0,0,-.2,-.2,0.05,0),PCA.all$rotation[,2]*expansionfac+c(0,+0.01,0,-.1,0,.05,-.1,-.05),labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','a','P_I'),cex=.6)
+legend(2.5,-1.5,legend=c("CM","HP","RS","SM"),pch=21,pt.bg=preycolvec,col=preycolvec,cex=.8)
+
+# COMPILE DATA for M CHAMAELEON
+PCA.dat <- growth[growth$Fed!='Prey',]
+PCA.dat$Fed2 <- PCA.dat$Fed
+PCA.dat[PCA.dat$Fed=='Y',]$Fed2 <- 'A'
+PCA.dat$Prey.Fed <- paste(PCA.dat$Prey,PCA.dat$Fed2,sep='.')
+
+subdat <- dat[dat$Day==14,]
+subpe <- pe.stats[pe.stats$Day==14,]
+subpe$ID <- paste(subpe$Prey,subpe$Fed,subpe$Rep,sep='.')
+PCA.dat$Chl_pcell <- subdat$Chl_pcell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngC_cell <- subdat$ngC_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$ngN_cell <- subdat$ngN_cell[match(PCA.dat$ID,subdat$ID)]
+#PCA.dat$CN_cell <- subdat$CN_cell[match(PCA.dat$ID,subdat$ID)]
+PCA.dat$Fv.Fm <- subpe$Fv.Fm[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$Pmax <- subpe$Pmax[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$a <- subpe$a[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$Ek <- subpe$Ek[match(PCA.dat$ID,subpe$ID)]
+PCA.dat$P_I <- subpe$P_I[match(PCA.dat$ID,subpe$ID)]
+#PCA.dat$P_I.cell <- subpe$P_I.cell[match(PCA.dat$ID,subpe$ID)]
+
+# RUN PRINCIPLE COMPONENT ANALYSIS
+PCA.all <- prcomp(PCA.dat[,c(5,8:dim(PCA.dat)[2])],center=TRUE,scale.=TRUE)
+#summary(PCA.all)
+
+# PLOT
+plot(PCA.all$x[,1],PCA.all$x[,2], xlab=paste('PCA 1, ',round(summary(PCA.all)$importance[2,1]*100,1),'%',sep=''), ylab=paste('PCA 2, ',round(summary(PCA.all)$importance[2,2]*100,1),'%',sep=''), col=preycolvec[PCA.dat$Prey],bg=preycolvec2[as.factor(PCA.dat$Prey.Fed)],pch=21, cex=1,las=1, xlim=c(-3,3), ylim = c(-3,3)); expansionfac <- 4.3; arrows(x0=rep(0,10),y0=rep(0,10),x1=PCA.all$rotation[,1]*expansionfac,y1 = PCA.all$rotation[,2]*expansionfac,length=.05); expansionfac <- expansionfac*1.1; text(PCA.all$rotation[,1]*expansionfac+c(-.2,0,0,0,-.2,-.2,0.05,0),PCA.all$rotation[,2]*expansionfac+c(0,+0.01,0,-.1,0,.05,-.1,-.05),labels=c('growth','chl-a','cell C','cell N','Fv/Fm','Pmax','a','P_I'),cex=.6)
+
+
+```
+
+
+## R Markdown
+
